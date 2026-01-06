@@ -11,6 +11,11 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "parent", "driver", "admin"], 
       default: "user" 
     },
+    phone: { type: String },
+    address: { type: String },
+    location: { type: String },
+    latitude: { type: Number },
+    longitude: { type: Number },
   },
   { timestamps: true }
 );
