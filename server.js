@@ -16,16 +16,24 @@ const app = express();
 app.enable("trust proxy");
 
 // CORS Configuration - MUST be before other middleware
-app.use(cors({
+const corsOptions = {
   origin: "*",
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
-}));
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  optionsSuccessStatus: 200
+};
 
-// Handle preflight requests globally
-app.options('*', cors());
+app.use(cors(corsOptions));
 
+// Handle preflight requests explicitly for all routes
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.status(200).send();
+});
 
 // Request logging
 app.use((req, res, next) => {
@@ -107,5 +115,8 @@ initSocket(server);
 
 // Start server
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(` Server running on 0.0.0.0:${PORT}`);
+  console.log(`🚀 Server running on 0.0.0.0:${PORT}`);
 });
+
+// Export for Vercel serverless
+module.exports = app;
