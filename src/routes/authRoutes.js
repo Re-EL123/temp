@@ -3,18 +3,21 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 
-
-
 const router = express.Router();
+
+// Handle preflight for auth routes
+router.options('*', (req, res) => {
+  res.status(200).end();
+});
 
 /* ---------------------- REGISTER USER ---------------------- */
 router.post("/register", async (req, res) => {
   console.log("BODY RECEIVED:", req.body);
   try {
-    const { name, surname,email, password, role } = req.body;
+    const { name, surname, email, password, role } = req.body;
 
-    if (!name|| !surname || !email || !password) {
-      return res.status(400).json({ message: "Name,Suranme, email & password required" });
+    if (!name || !surname || !email || !password) {
+      return res.status(400).json({ message: "Name, Surname, email & password required" });
     }
 
     // Check if user already exists
@@ -40,7 +43,7 @@ router.post("/register", async (req, res) => {
       user: {
         id: newUser._id,
         name: newUser.name,
-        surname: newUser.suranme,
+        surname: newUser.surname,
         email: newUser.email,
         role: newUser.role,
       },
