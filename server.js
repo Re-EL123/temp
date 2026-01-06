@@ -15,14 +15,24 @@ const app = express();
 // Enable proxy (important for production & tracking)
 app.enable("trust proxy");
 
-// Request logging (preserved)
+// CORS Configuration - MUST be before other middleware
+app.use(cors({
+  origin: "*",
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+}));
+
+// Handle preflight requests globally
+app.options('*', cors());
+
+// Request logging
 app.use((req, res, next) => {
   console.log("Request received:", req.method, req.url);
   next();
 });
 
 // Middleware
-app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 // Connect to MongoDB
@@ -33,7 +43,7 @@ connectDB()
     process.exit(1);
   });
 
-// Extra logging (preserved)
+// Extra logging
 app.use((req, res, next) => {
   console.log("➡ Incoming:", req.method, req.url);
   next();
@@ -47,7 +57,7 @@ const protectedRoutes = require("./src/routes/protectedRoutes");
 const adminRoutes = require("./src/routes/adminRoutes");
 const tripRoutes = require("./src/routes/tripRoutes");
 const paymentRoutes = require("./src/routes/paymentRoutes");
-const withdrawalRoute = require("./routes/withdrawalRoute");
+const withdrawalRoute = require("./src/routes/withdrawalRoute");
 
 // Public Auth Routes
 app.use("/api/auth", authRoutes);
@@ -96,5 +106,5 @@ initSocket(server);
 
 // Start server
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on 0.0.0.0:${PORT}`);
+  console.log(` Server running on 0.0.0.0:${PORT}`);
 });
