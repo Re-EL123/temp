@@ -3,7 +3,8 @@ const dotenv = require("dotenv");
 
 dotenv.config();
 
-const MONGO_URI = process.env.MONGO_URI;
+// Support both MONGO_URI and MONGODB_URI
+const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 
 let cachedConnection = null;
 
@@ -16,7 +17,7 @@ async function connectDB() {
 
   try {
     if (!MONGO_URI) {
-      throw new Error("MongoDB connection string (MONGO_URI) is missing in .env");
+      throw new Error("MongoDB connection string (MONGODB_URI or MONGO_URI) is missing in environment variables");
     }
 
     const connection = await mongoose.connect(MONGO_URI, {
