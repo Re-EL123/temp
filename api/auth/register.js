@@ -26,27 +26,43 @@ module.exports = async (req, res) => {
   }
 
   try {
+    console.log("[REGISTER] Starting registration process...");
+    
     // Connect to MongoDB
-    await connectDB();
+    try {
+      await connectDB();
+      console.log("[REGISTER] Database connected");
+    } catch (dbError) {
+      console.error("[REGISTER] Database connection error:", dbError);
+      return res.status(500).json({ 
+        message: "Database connection failed", 
+        error: dbError.message 
+      });
+    }
 
     const { name, surname, email, password, role } = req.body;
 
-    console.log("BODY RECEIVED:", req.body);
+    console.log("[REGISTER] Body received:", { name, surname, email, role });
 
     if (!name || !surname || !email || !password) {
+      console.log("[REGISTER] Missing required fields");
       return res.status(400).json({ message: "Name, Surname, email & password required" });
     }
 
     // Check if user already exists
+    console.log("[REGISTER] Checking for existing user...");
     const existing = await User.findOne({ email });
     if (existing) {
+      console.log("[REGISTER] User already exists");
       return res.status(400).json({ message: "Email already exists" });
     }
 
     // Hash password
+    console.log("[REGISTER] Hashing password...");
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create user
+    console.log("[REGISTER] Creating user...");
     const newUser = await User.create({
       name,
       surname,
@@ -54,6 +70,8 @@ module.exports = async (req, res) => {
       password: hashedPassword,
       role: role || "user",
     });
+
+    console.log("[REGISTER] User created successfully:", newUser._id);
 
     return res.status(201).json({
       message: "User registered successfully",
@@ -66,7 +84,11 @@ module.exports = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Registration error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    console.error("[REGISTER] Error:", error);
+    return res.status(500).json({ 
+      message: "Server error", 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
