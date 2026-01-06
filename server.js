@@ -26,6 +26,7 @@ app.use(cors({
 // Handle preflight requests globally
 app.options('*', cors());
 
+
 // Request logging
 app.use((req, res, next) => {
   console.log("Request received:", req.method, req.url);
