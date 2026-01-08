@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema(
     address: { type: String },
     location: { type: String },
     latitude: { type: Number },
-    longitude: { type: Number },,
+    longitude: { type: Number },
     children: [
       {
         type: mongoose.Schema.Types.ObjectId,
