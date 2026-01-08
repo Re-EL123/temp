@@ -1,3 +1,4 @@
+// Deployment fix: v1.0.1
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../../src/models/user");
