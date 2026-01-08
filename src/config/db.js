@@ -1,7 +1,5 @@
 const mongoose = require("mongoose");
-const dotenv = require("dotenv");
-
-dotenv.config();
+// Note: dotenv not needed in Vercel serverless environment - env vars are injected
 
 // Support both MONGO_URI and MONGODB_URI
 const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
