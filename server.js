@@ -66,6 +66,7 @@ const protectedRoutes = require("./src/routes/protectedRoutes");
 const adminRoutes = require("./src/routes/adminRoutes");
 const tripRoutes = require("./src/routes/tripRoutes");
 const paymentRoutes = require("./src/routes/paymentRoutes");
+const userRoutes = require("./src/routes/userRoutes");
 const withdrawalRoute = require("./src/routes/withdrawalRoute");
 
 // Public Auth Routes
@@ -74,6 +75,8 @@ app.use("/api/auth", authRoutes);
 // Protected Routes
 app.use("/api/protected", protectedRoutes);
 
+// User Routes
+app.use("/api/user", userRoutes);
 // Admin Routes
 app.use("/api/admin", adminRoutes);
 
