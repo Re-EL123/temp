@@ -81,6 +81,7 @@ module.exports = async (req, res) => {
         surname: user.surname,
         email: user.email,
         role: user.role,
+        onboardingCompleted: user.onboardingCompleted,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
