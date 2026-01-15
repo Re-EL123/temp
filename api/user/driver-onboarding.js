@@ -18,7 +18,7 @@ module.exports = async (req, res) => {
 
   // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return res.status(200).end.json({ ok: true });
   }
 
   // Only allow POST for driver onboarding
