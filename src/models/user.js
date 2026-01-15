@@ -23,6 +23,19 @@ const userSchema = new mongoose.Schema(
         ref: 'Child'
       }
     ]
+        ],
+
+    // Driver onboarding fields
+    onboardingCompleted: {
+      type: Boolean,
+      default: false
+    },
+    registrationNumber: { type: String },
+    passengerSeats: { type: Number },
+    carBrand: { type: String },
+    carModel: { type: String },
+    cellNumber: { type: String },
+    driverPicture: { type: String
   },
   { timestamps: true }
 );
