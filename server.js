@@ -109,18 +109,20 @@ app.use((req, res) => {
 // ============================
 // SOCKET.IO + SERVER START
 // ============================
-const PORT = process.env.PORT || 3000;
 
-// Create HTTP server (required for Socket.IO)
-const server = http.createServer(app);
-
-// Initialize Socket.IO
-initSocket(server);
-
-// Start server
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on 0.0.0.0:${PORT}`);
-});
-
+if (!process.env.VERCEL_URL) {
+  // Create HTTP server (required for Socket.IO) - local only
+  const server = http.createServer(app);
+  
+  // Initialize Socket.IO
+  initSocket(server);
+  
+  // Start server
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server running on 0.0.0.0:${PORT}`);
+  });
+} else {
+  console.log("⚙️ Running in Vercel serverless mode - Socket.IO disabled");
+}
 // Export for Vercel serverless
 module.exports = app;
