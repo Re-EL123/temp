@@ -50,8 +50,8 @@ connectDB()
   .then(() => console.log("✅ MongoDB connected successfully"))
   .catch((err) => {
     console.error("❌ MongoDB connection failed:", err.message);
-    process.exit(1);
-  });
+      // Log error but don't exit - serverless needs to stay running
+  
 
 // Extra logging
 app.use((req, res, next) => {
