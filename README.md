@@ -242,5 +242,13 @@ Audit logs for admin actions
 👨‍💻 Contributors
 Backend Development: SafeSchoolRide Engineering Team
 
+## Driver Onboarding Flow
+
+**New Feature**: Driver profile completion (Jan 15, 2026)
+- POST `/api/user/driver-onboarding` - Complete driver onboarding with vehicle details
+- CORS enabled for cross-origin requests from mobile and web applications
+- Automatic Driver profile creation on successful onboarding
+- Status flag `onboardingCompleted` tracks driver profile completion
+
 Architecture & Design: Ground Up Grinders
 
