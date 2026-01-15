@@ -1,4 +1,5 @@
 // server.js
+// API Server for Safe School Ride Platform
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
