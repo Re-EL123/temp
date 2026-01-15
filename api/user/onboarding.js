@@ -13,28 +13,25 @@ const setCorsHeaders = (res) => {
 };
 
 module.exports = async (req, res) => {
-  // Set CORS headers for all requests
   setCorsHeaders(res);
   
-  // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
   
-  // Only allow POST for onboarding submission
   if (req.method !== 'POST') {
     return res.status(405).json({ message: 'Method not allowed' });
   }
   
   try {
-    console.log("[ONBOARDING] Submitting onboarding data...");
+    console.log("[DRIVER-ONBOARDING] Submitting driver onboarding data...");
     
     // Connect to MongoDB
     try {
       await connectDB();
-      console.log("[ONBOARDING] Database connected");
+      console.log("[DRIVER-ONBOARDING] Database connected");
     } catch (dbError) {
-      console.error("[ONBOARDING] Database connection error:", dbError);
+      console.error("[DRIVER-ONBOARDING] Database connection error:", dbError);
       return res.status(500).json({ 
         message: "Database connection failed", 
         error: dbError.message 
@@ -44,7 +41,7 @@ module.exports = async (req, res) => {
     // Get token from Authorization header
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      console.log("[ONBOARDING] No authorization token provided");
+      console.log("[DRIVER-ONBOARDING] No authorization token provided");
       return res.status(401).json({ message: "No authorization token provided" });
     }
     
@@ -52,26 +49,52 @@ module.exports = async (req, res) => {
     
     // Verify JWT token
     if (!process.env.JWT_SECRET) {
-      console.error("[ONBOARDING] JWT_SECRET not found");
+      console.error("[DRIVER-ONBOARDING] JWT_SECRET not found");
       return res.status(500).json({ message: "Server configuration error" });
     }
     
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log("[ONBOARDING] Token verified for user:", decoded.id);
+      console.log("[DRIVER-ONBOARDING] Token verified for user:", decoded.id);
     } catch (jwtError) {
-      console.log("[ONBOARDING] Invalid token:", jwtError.message);
+      console.log("[DRIVER-ONBOARDING] Invalid token:", jwtError.message);
       return res.status(401).json({ message: "Invalid or expired token" });
     }
     
     // Extract onboarding data from request body
-    const { drivingLicenseNumber, licenseExpiryDate, vehicleRegistration, insuranceExpiry } = req.body;
+    const { 
+      registrationNumber, 
+      passengerSeats, 
+      carBrand, 
+      carModel, 
+      cellNumber,
+      driverPicture 
+    } = req.body;
+    
+    console.log("[DRIVER-ONBOARDING] Received data:", {
+      registrationNumber,
+      passengerSeats,
+      carBrand,
+      carModel,
+      cellNumber
+    });
     
     // Validate required fields
-    if (!drivingLicenseNumber || !licenseExpiryDate || !vehicleRegistration || !insuranceExpiry) {
-      console.log("[ONBOARDING] Missing required fields");
-      return res.status(400).json({ message: "Missing required onboarding fields" });
+    if (!registrationNumber || !passengerSeats || !carBrand || !carModel || !cellNumber) {
+      console.log("[DRIVER-ONBOARDING] Missing required fields");
+      return res.status(400).json({ 
+        message: "Missing required onboarding fields",
+        received: { registrationNumber, passengerSeats, carBrand, carModel, cellNumber }
+      });
+    }
+    
+    // Validate passengerSeats is a number
+    const seatsNumber = parseInt(passengerSeats, 10);
+    if (isNaN(seatsNumber) || seatsNumber <= 0) {
+      return res.status(400).json({ 
+        message: "Passenger seats must be a positive number" 
+      });
     }
     
     // Update user with onboarding data and mark as completed
@@ -79,24 +102,29 @@ module.exports = async (req, res) => {
       decoded.id,
       {
         onboardingCompleted: true,
-        drivingLicenseNumber,
-        licenseExpiryDate,
-        vehicleRegistration,
-        insuranceExpiry,
+        registrationNumber,
+        passengerSeats: seatsNumber,
+        carBrand,
+        carModel,
+        phone: cellNumber,
+        driverPicture: driverPicture || 'https://via.placeholder.com/150',
         updatedAt: new Date()
       },
-      { new: true }
+      { 
+        new: true,
+        runValidators: true // Enable validation on update
+      }
     ).select('-password');
     
     if (!updatedUser) {
-      console.log("[ONBOARDING] User not found");
+      console.log("[DRIVER-ONBOARDING] User not found");
       return res.status(404).json({ message: "User not found" });
     }
     
-    console.log("[ONBOARDING] Onboarding completed successfully for user:", decoded.id);
+    console.log("[DRIVER-ONBOARDING] Onboarding completed successfully for user:", decoded.id);
     return res.json({
       success: true,
-      message: "Onboarding completed successfully",
+      message: "Driver profile completed successfully",
       user: {
         id: updatedUser._id,
         name: updatedUser.name,
@@ -104,14 +132,27 @@ module.exports = async (req, res) => {
         email: updatedUser.email,
         role: updatedUser.role,
         onboardingCompleted: updatedUser.onboardingCompleted,
-        drivingLicenseNumber: updatedUser.drivingLicenseNumber,
-        vehicleRegistration: updatedUser.vehicleRegistration,
+        registrationNumber: updatedUser.registrationNumber,
+        passengerSeats: updatedUser.passengerSeats,
+        carBrand: updatedUser.carBrand,
+        carModel: updatedUser.carModel,
+        phone: updatedUser.phone,
+        driverPicture: updatedUser.driverPicture,
         createdAt: updatedUser.createdAt,
         updatedAt: updatedUser.updatedAt,
       },
     });
   } catch (error) {
-    console.error("[ONBOARDING] Error:", error);
+    console.error("[DRIVER-ONBOARDING] Error:", error);
+    
+    // Handle validation errors specifically
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        message: "Validation error", 
+        errors: Object.values(error.errors).map(e => e.message)
+      });
+    }
+    
     return res.status(500).json({ 
       message: "Server error", 
       error: error.message,
