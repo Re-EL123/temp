@@ -69,6 +69,7 @@ module.exports = async (req, res) => {
       email,
       password: hashedPassword,
       role: role || "user",
+      onboardingCompleted: false,
     });
 
     console.log("[REGISTER] User created successfully:", newUser._id);
