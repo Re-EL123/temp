@@ -69,6 +69,7 @@ module.exports = async (req, res) => {
       email,
       password: hashedPassword,
       role: role || "user",
+          onboardingCompleted: role === 'driver' ? false : undefined,
     });
 
     console.log("[REGISTER] User created successfully:", newUser._id);
@@ -81,6 +82,7 @@ module.exports = async (req, res) => {
         surname: newUser.surname,
         email: newUser.email,
         role: newUser.role,
+                onboardingCompleted: newUser.onboardingCompleted,
       },
     });
   } catch (error) {
