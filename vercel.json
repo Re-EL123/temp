@@ -6,28 +6,6 @@
       "use": "@vercel/node"
     }
   ],
-  "routes": [
-    {
-      "src": "/api/trips/once-off",
-      "dest": "api/trips/once-off.js"
-    },
-    {
-      "src": "/api/trips/recurring",
-      "dest": "api/trips/recurring.js"
-    },
-        {
-      "src": "/api/user/driver-onboarding",
-      "dest": "api/user/driver-onboarding.js"
-    },
-    {
-      "src": "/api/(.*)",
-      "dest": "api/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "server.js"
-    }
-  ],
   "headers": [
     {
       "source": "/api/(.*)",
