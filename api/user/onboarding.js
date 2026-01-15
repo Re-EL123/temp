@@ -1,3 +1,4 @@
+//api/user/onboarding.js
 const jwt = require("jsonwebtoken");
 const User = require("../../src/models/user");
 const connectDB = require("../../src/config/db");
