@@ -12,7 +12,7 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "parent", "driver", "admin"], 
       default: "user" 
     },
-    onboardingCompleted: { type: Boolean, default: false },
+    onboardingCompleted: { type: Boolean, default: true },
     phone: { type: String },
     address: { type: String },
     location: { type: String },
