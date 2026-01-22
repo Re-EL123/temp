@@ -5,7 +5,13 @@ const driverSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
+    unique: true,
   },
+  townshipId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Township',
+  },
+  townshipName: String,
   vehicleSeats: {
     type: Number,
     required: true,
@@ -30,6 +36,10 @@ const driverSchema = new mongoose.Schema({
     enum: ['available', 'busy', 'offline'],
     default: 'offline',
   },
+  isActive: {
+    type: Boolean,
+    default: false,
+  },
   isVerified: {
     type: Boolean,
     default: false,
@@ -44,6 +54,12 @@ const driverSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Trip',
   }],
+  vehicleModel: String,
+  vehicleRegistration: String,
+  totalEarnings: {
+    type: Number,
+    default: 0,
+  },
   createdAt: {
     type: Date,
     default: Date.now,
@@ -52,9 +68,11 @@ const driverSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+}, {
+  timestamps: true,
 });
 
-// Add geospatial index for location-based queries
 driverSchema.index({ location: '2dsphere' });
+driverSchema.index({ townshipId: 1, status: 1 });
 
 module.exports = mongoose.model('Driver', driverSchema);
