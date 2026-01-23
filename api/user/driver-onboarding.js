@@ -1,19 +1,35 @@
-//api/user/onboarding.js
-const jwt = require("jsonwebtoken");
-const User = require("../../src/models/user");
-const connectDB = require("../../src/config/db");
+const jwt = require('jsonwebtoken');
+const User = require('../../src/models/user');
+const connectDB = require('../../src/config/db');
+
+// Allowed origins for CORS
+const allowedOrigins = [
+  'https://longlife-qll1--8081--31fc58ec.local-credentialless.webcontainer.io',
+  'http://localhost:8081',
+  'http://localhost:19006',
+  // add your production frontend URL(s) here
+];
 
 // CORS headers helper
-const setCorsHeaders = (res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+const setCorsHeaders = (req, res) => {
+  const origin = req.headers.origin;
+
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, X-Requested-With, Accept, Origin'
+  );
   res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Vary', 'Origin');
   return res;
 };
 
 module.exports = async (req, res) => {
-  setCorsHeaders(res);
+  setCorsHeaders(req, res);
   
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -24,16 +40,16 @@ module.exports = async (req, res) => {
   }
   
   try {
-    console.log("[DRIVER-ONBOARDING] Submitting driver onboarding data...");
+    console.log('[DRIVER-ONBOARDING] Submitting driver onboarding data...');
     
     // Connect to MongoDB
     try {
       await connectDB();
-      console.log("[DRIVER-ONBOARDING] Database connected");
+      console.log('[DRIVER-ONBOARDING] Database connected');
     } catch (dbError) {
-      console.error("[DRIVER-ONBOARDING] Database connection error:", dbError);
+      console.error('[DRIVER-ONBOARDING] Database connection error:', dbError);
       return res.status(500).json({ 
-        message: "Database connection failed", 
+        message: 'Database connection failed', 
         error: dbError.message 
       });
     }
@@ -41,25 +57,25 @@ module.exports = async (req, res) => {
     // Get token from Authorization header
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      console.log("[DRIVER-ONBOARDING] No authorization token provided");
-      return res.status(401).json({ message: "No authorization token provided" });
+      console.log('[DRIVER-ONBOARDING] No authorization token provided');
+      return res.status(401).json({ message: 'No authorization token provided' });
     }
     
     const token = authHeader.split(' ')[1];
     
     // Verify JWT token
     if (!process.env.JWT_SECRET) {
-      console.error("[DRIVER-ONBOARDING] JWT_SECRET not found");
-      return res.status(500).json({ message: "Server configuration error" });
+      console.error('[DRIVER-ONBOARDING] JWT_SECRET not found');
+      return res.status(500).json({ message: 'Server configuration error' });
     }
     
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log("[DRIVER-ONBOARDING] Token verified for user:", decoded.id);
+      console.log('[DRIVER-ONBOARDING] Token verified for user:', decoded.id);
     } catch (jwtError) {
-      console.log("[DRIVER-ONBOARDING] Invalid token:", jwtError.message);
-      return res.status(401).json({ message: "Invalid or expired token" });
+      console.log('[DRIVER-ONBOARDING] Invalid token:', jwtError.message);
+      return res.status(401).json({ message: 'Invalid or expired token' });
     }
     
     // Extract onboarding data from request body
@@ -72,7 +88,7 @@ module.exports = async (req, res) => {
       driverPicture 
     } = req.body;
     
-    console.log("[DRIVER-ONBOARDING] Received data:", {
+    console.log('[DRIVER-ONBOARDING] Received data:', {
       registrationNumber,
       passengerSeats,
       carBrand,
@@ -82,9 +98,9 @@ module.exports = async (req, res) => {
     
     // Validate required fields
     if (!registrationNumber || !passengerSeats || !carBrand || !carModel || !cellNumber) {
-      console.log("[DRIVER-ONBOARDING] Missing required fields");
+      console.log('[DRIVER-ONBOARDING] Missing required fields');
       return res.status(400).json({ 
-        message: "Missing required onboarding fields",
+        message: 'Missing required onboarding fields',
         received: { registrationNumber, passengerSeats, carBrand, carModel, cellNumber }
       });
     }
@@ -93,7 +109,7 @@ module.exports = async (req, res) => {
     const seatsNumber = parseInt(passengerSeats, 10);
     if (isNaN(seatsNumber) || seatsNumber <= 0) {
       return res.status(400).json({ 
-        message: "Passenger seats must be a positive number" 
+        message: 'Passenger seats must be a positive number' 
       });
     }
     
@@ -117,14 +133,14 @@ module.exports = async (req, res) => {
     ).select('-password');
     
     if (!updatedUser) {
-      console.log("[DRIVER-ONBOARDING] User not found");
-      return res.status(404).json({ message: "User not found" });
+      console.log('[DRIVER-ONBOARDING] User not found');
+      return res.status(404).json({ message: 'User not found' });
     }
     
-    console.log("[DRIVER-ONBOARDING] Onboarding completed successfully for user:", decoded.id);
+    console.log('[DRIVER-ONBOARDING] Onboarding completed successfully for user:', decoded.id);
     return res.json({
       success: true,
-      message: "Driver profile completed successfully",
+      message: 'Driver profile completed successfully',
       user: {
         id: updatedUser._id,
         name: updatedUser.name,
@@ -143,18 +159,18 @@ module.exports = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[DRIVER-ONBOARDING] Error:", error);
+    console.error('[DRIVER-ONBOARDING] Error:', error);
     
     // Handle validation errors specifically
     if (error.name === 'ValidationError') {
       return res.status(400).json({ 
-        message: "Validation error", 
+        message: 'Validation error', 
         errors: Object.values(error.errors).map(e => e.message)
       });
     }
     
     return res.status(500).json({ 
-      message: "Server error", 
+      message: 'Server error', 
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
