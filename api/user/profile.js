@@ -5,13 +5,13 @@ const connectDB = require("../../src/config/db");
 
 // CORS headers helper
 const setCorsHeaders = (res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, X-Requested-With, Accept, Origin'
   );
-  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   return res;
 };
 
@@ -20,13 +20,13 @@ module.exports = async (req, res) => {
   setCorsHeaders(res);
 
   // Handle preflight OPTIONS request
-  if (req.method === "OPTIONS") {
+  if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
   // Only allow GET for profile
-  if (req.method !== "GET") {
-    return res.status(405).json({ message: "Method not allowed" });
+  if (req.method !== 'GET') {
+    return res.status(405).json({ message: 'Method not allowed' });
   }
 
   try {
@@ -46,12 +46,12 @@ module.exports = async (req, res) => {
 
     // Get token from Authorization header
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
       console.log("[PROFILE] No authorization token provided");
       return res.status(401).json({ message: "No authorization token provided" });
     }
 
-    const token = authHeader.split(" ")[1];
+        const token = authHeader.split(' ')[1];
 
     // Verify JWT token
     if (!process.env.JWT_SECRET) {
@@ -69,7 +69,7 @@ module.exports = async (req, res) => {
     }
 
     // Fetch user from database
-    const user = await User.findById(decoded.id).select("-password");
+        const user = await User.findById(decoded.id).select('-password');
     if (!user) {
       console.log("[PROFILE] User not found");
       return res.status(404).json({ message: "User not found" });
@@ -87,7 +87,7 @@ module.exports = async (req, res) => {
     try {
       const todayTrips = await Trip.find({
         driver: user._id,
-        status: "completed",
+        status: 'completed',
         completedAt: { $gte: startOfDay, $lte: endOfDay },
       });
 
@@ -123,7 +123,7 @@ module.exports = async (req, res) => {
     return res.status(500).json({
       message: "Server error",
       error: error.message,
-      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 };
