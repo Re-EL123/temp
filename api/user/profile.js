@@ -1,23 +1,37 @@
-const jwt = require("jsonwebtoken");
-const User = require("../../src/models/user");
-const Trip = require("../../src/models/trip");
-const connectDB = require("../../src/config/db");
+const jwt = require('jsonwebtoken');
+const User = require('../../src/models/user');
+const Trip = require('../../src/models/trip');
+const connectDB = require('../../src/config/db');
+
+// Allowed origins for CORS
+const allowedOrigins = [
+  'https://longlife-qll1--8081--31fc58ec.local-credentialless.webcontainer.io',
+  'http://localhost:8081',
+  'http://localhost:19006',
+  // add your production frontend URL(s) here
+];
 
 // CORS headers helper
-const setCorsHeaders = (res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+const setCorsHeaders = (req, res) => {
+  const origin = req.headers.origin;
+
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'Content-Type, Authorization, X-Requested-With, Accept, Origin'
   );
   res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Vary', 'Origin');
   return res;
 };
 
 module.exports = async (req, res) => {
   // Set CORS headers for all requests
-  setCorsHeaders(res);
+  setCorsHeaders(req, res);
 
   // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
@@ -30,49 +44,49 @@ module.exports = async (req, res) => {
   }
 
   try {
-    console.log("[PROFILE] Fetching user profile...");
+    console.log('[PROFILE] Fetching user profile...');
 
     // Connect to MongoDB
     try {
       await connectDB();
-      console.log("[PROFILE] Database connected");
+      console.log('[PROFILE] Database connected');
     } catch (dbError) {
-      console.error("[PROFILE] Database connection error:", dbError);
+      console.error('[PROFILE] Database connection error:', dbError);
       return res.status(500).json({
-        message: "Database connection failed",
+        message: 'Database connection failed',
         error: dbError.message,
       });
     }
 
     // Get token from Authorization header
     const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      console.log("[PROFILE] No authorization token provided");
-      return res.status(401).json({ message: "No authorization token provided" });
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.log('[PROFILE] No authorization token provided');
+      return res.status(401).json({ message: 'No authorization token provided' });
     }
 
-        const token = authHeader.split(' ')[1];
+    const token = authHeader.split(' ')[1];
 
     // Verify JWT token
     if (!process.env.JWT_SECRET) {
-      console.error("[PROFILE] JWT_SECRET not found");
-      return res.status(500).json({ message: "Server configuration error" });
+      console.error('[PROFILE] JWT_SECRET not found');
+      return res.status(500).json({ message: 'Server configuration error' });
     }
 
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log("[PROFILE] Token verified for user:", decoded.id);
+      console.log('[PROFILE] Token verified for user:', decoded.id);
     } catch (jwtError) {
-      console.log("[PROFILE] Invalid token:", jwtError.message);
-      return res.status(401).json({ message: "Invalid or expired token" });
+      console.log('[PROFILE] Invalid token:', jwtError.message);
+      return res.status(401).json({ message: 'Invalid or expired token' });
     }
 
     // Fetch user from database
-        const user = await User.findById(decoded.id).select('-password');
+    const user = await User.findById(decoded.id).select('-password');
     if (!user) {
-      console.log("[PROFILE] User not found");
-      return res.status(404).json({ message: "User not found" });
+      console.log('[PROFILE] User not found');
+      return res.status(404).json({ message: 'User not found' });
     }
 
     // Compute today's earnings (optional but useful for your dashboard)
@@ -96,10 +110,10 @@ module.exports = async (req, res) => {
         0
       );
     } catch (tripError) {
-      console.error("[PROFILE] Error calculating today earnings:", tripError);
+      console.error('[PROFILE] Error calculating today earnings:', tripError);
     }
 
-    console.log("[PROFILE] Profile fetched successfully");
+    console.log('[PROFILE] Profile fetched successfully');
 
     return res.json({
       success: true,
@@ -119,11 +133,11 @@ module.exports = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[PROFILE] Error:", error);
+    console.error('[PROFILE] Error:', error);
     return res.status(500).json({
-      message: "Server error",
+      message: 'Server error',
       error: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 };
