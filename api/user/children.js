@@ -4,12 +4,12 @@ const Child = require('../../src/models/child');
 const connectDB = require('../../src/config/db');
 const bcrypt = require('bcryptjs'); // currently unused but kept to preserve everything
 
-// CORS headers helper
+// CORS headers helper - allows ALL origins
 const setCorsHeaders = (res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  // Removed Access-Control-Allow-Credentials since we're using wildcard
   return res;
 };
 
