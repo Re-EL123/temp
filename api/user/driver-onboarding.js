@@ -2,29 +2,14 @@ const jwt = require('jsonwebtoken');
 const User = require('../../src/models/user');
 const connectDB = require('../../src/config/db');
 
-// Allowed origins for CORS
-const allowedOrigins = [
-  'https://longlife-qll1--8081--31fc58ec.local-credentialless.webcontainer.io',
-  'http://localhost:8081',
-  'http://localhost:19006',
-  // add your production frontend URL(s) here
-];
-
-// CORS headers helper
+// CORS headers helper - allows ALL origins
 const setCorsHeaders = (req, res) => {
-  const origin = req.headers.origin;
-
-  if (origin && allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'Content-Type, Authorization, X-Requested-With, Accept, Origin'
   );
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Vary', 'Origin');
   return res;
 };
 
@@ -128,7 +113,7 @@ module.exports = async (req, res) => {
       },
       { 
         new: true,
-        runValidators: true // Enable validation on update
+        runValidators: true
       }
     ).select('-password');
     
