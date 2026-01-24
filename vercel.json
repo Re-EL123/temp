@@ -6,7 +6,7 @@
       "headers": [
         {
           "key": "Access-Control-Allow-Origin",
-          "value": "https://longlife-qll1--8081--31fc58ec.local-credentialless.webcontainer.io"
+          "value": "*"
         },
         {
           "key": "Access-Control-Allow-Methods",
@@ -15,10 +15,6 @@
         {
           "key": "Access-Control-Allow-Headers",
           "value": "X-Requested-With, Content-Type, Accept, Authorization, Origin"
-        },
-        {
-          "key": "Access-Control-Allow-Credentials",
-          "value": "true"
         },
         {
           "key": "Access-Control-Max-Age",
