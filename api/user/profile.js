@@ -30,12 +30,14 @@ const setCorsHeaders = (req, res) => {
 };
 
 module.exports = async (req, res) => {
-  // Set CORS headers for all requests
+  // Set CORS headers for all requests FIRST
   setCorsHeaders(req, res);
 
-  // Handle preflight OPTIONS request
+  // Handle preflight OPTIONS request IMMEDIATELY - don't do anything else
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    console.log('[PROFILE] Handling OPTIONS preflight');
+    res.status(200).end();
+    return;
   }
 
   // Only allow GET for profile
@@ -129,7 +131,7 @@ module.exports = async (req, res) => {
 
         // New fields used by the dashboard UI
         isActive: user.isActive || false,
-        totalEarnings: totalEarningsToday, // R{driverData?.totalEarnings || 0}
+        totalEarnings: totalEarningsToday,
       },
     });
   } catch (error) {
