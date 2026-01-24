@@ -11,116 +11,124 @@ const setCorsHeaders = (req, res) => {
     'Access-Control-Allow-Headers',
     'Content-Type, Authorization, X-Requested-With, Accept, Origin'
   );
-  // Removed Access-Control-Allow-Credentials and Vary since we're using wildcard
   return res;
 };
 
 module.exports = async (req, res) => {
-  // Set CORS headers for all requests FIRST
   setCorsHeaders(req, res);
 
-  // Handle preflight OPTIONS request IMMEDIATELY - don't do anything else
   if (req.method === 'OPTIONS') {
     console.log('[PROFILE] Handling OPTIONS preflight');
     res.status(200).end();
     return;
   }
 
-  // Only allow GET for profile
-  if (req.method !== 'GET') {
-    return res.status(405).json({ message: 'Method not allowed' });
-  }
-
-
   try {
-    console.log('[PROFILE] Fetching user profile...');
+    await connectDB();
 
-    // Connect to MongoDB
-    try {
-      await connectDB();
-      console.log('[PROFILE] Database connected');
-    } catch (dbError) {
-      console.error('[PROFILE] Database connection error:', dbError);
-      return res.status(500).json({
-        message: 'Database connection failed',
-        error: dbError.message,
-      });
-    }
-
-    // Get token from Authorization header
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      console.log('[PROFILE] No authorization token provided');
       return res.status(401).json({ message: 'No authorization token provided' });
     }
 
     const token = authHeader.split(' ')[1];
 
-    // Verify JWT token
     if (!process.env.JWT_SECRET) {
-      console.error('[PROFILE] JWT_SECRET not found');
       return res.status(500).json({ message: 'Server configuration error' });
     }
 
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log('[PROFILE] Token verified for user:', decoded.id);
     } catch (jwtError) {
-      console.log('[PROFILE] Invalid token:', jwtError.message);
       return res.status(401).json({ message: 'Invalid or expired token' });
     }
 
-    // Fetch user from database
-    const user = await User.findById(decoded.id).select('-password');
-    if (!user) {
-      console.log('[PROFILE] User not found');
-      return res.status(404).json({ message: 'User not found' });
-    }
+    // ✅ Handle GET - fetch profile
+    if (req.method === 'GET') {
+      const user = await User.findById(decoded.id).select('-password');
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
 
-    // Compute today's earnings (optional but useful for your dashboard)
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
 
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+      let totalEarningsToday = 0;
+      try {
+        const todayTrips = await Trip.find({
+          driver: user._id,
+          status: 'completed',
+          completedAt: { $gte: startOfDay, $lte: endOfDay },
+        });
+        totalEarningsToday = todayTrips.reduce(
+          (sum, trip) => sum + (trip.paymentAmount || 0),
+          0
+        );
+      } catch (tripError) {
+        console.error('[PROFILE] Error calculating earnings:', tripError);
+      }
 
-    let totalEarningsToday = 0;
-
-    try {
-      const todayTrips = await Trip.find({
-        driver: user._id,
-        status: 'completed',
-        completedAt: { $gte: startOfDay, $lte: endOfDay },
+      return res.json({
+        success: true,
+        user: {
+          id: user._id,
+          name: user.name,
+          surname: user.surname,
+          email: user.email,
+          role: user.role,
+          onboardingCompleted: user.onboardingCompleted,
+          registrationNumber: user.registrationNumber, // ✅ Added
+          carBrand: user.carBrand, // ✅ Added
+          carModel: user.carModel, // ✅ Added
+          isActive: user.isActive || false,
+          totalEarnings: totalEarningsToday,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
       });
-
-      totalEarningsToday = todayTrips.reduce(
-        (sum, trip) => sum + (trip.paymentAmount || 0),
-        0
-      );
-    } catch (tripError) {
-      console.error('[PROFILE] Error calculating today earnings:', tripError);
     }
 
-    console.log('[PROFILE] Profile fetched successfully');
+    // ✅ Handle PUT - toggle isActive status
+    if (req.method === 'PUT') {
+      const { isActive } = req.body;
 
-    return res.json({
-      success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        surname: user.surname,
-        email: user.email,
-        role: user.role,
-        onboardingCompleted: user.onboardingCompleted,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
+      if (typeof isActive !== 'boolean') {
+        return res.status(400).json({ message: 'isActive must be a boolean' });
+      }
 
-        // New fields used by the dashboard UI
-        isActive: user.isActive || false,
-        totalEarnings: totalEarningsToday,
-      },
-    });
+      const updatedUser = await User.findByIdAndUpdate(
+        decoded.id,
+        { isActive, updatedAt: new Date() },
+        { new: true }
+      ).select('-password');
+
+      if (!updatedUser) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      console.log(`[PROFILE] User ${decoded.id} isActive updated to:`, isActive);
+
+      return res.json({
+        success: true,
+        message: 'Active status updated',
+        user: {
+          id: updatedUser._id,
+          name: updatedUser.name,
+          surname: updatedUser.surname,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          isActive: updatedUser.isActive,
+          registrationNumber: updatedUser.registrationNumber,
+          carBrand: updatedUser.carBrand,
+          carModel: updatedUser.carModel,
+        },
+      });
+    }
+
+    return res.status(405).json({ message: 'Method not allowed' });
   } catch (error) {
     console.error('[PROFILE] Error:', error);
     return res.status(500).json({
