@@ -1,4 +1,3 @@
-//src/models/user.js
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema(
@@ -41,11 +40,23 @@ const userSchema = new mongoose.Schema(
       required: function() { return this.role === 'driver'; }
     },
     driverPicture: { type: String, trim: true },
-
     
     // NEW: driver online/offline status
     isActive: { type: Boolean, default: false },
-
+    
+    // NEW: Additional vehicle details for Socket.IO integration
+    seats: { 
+      type: Number, 
+      default: function() { return this.passengerSeats || 4; }
+    },
+    
+    // NEW: Enhanced location tracking for real-time driver positioning
+    currentLocation: {
+      latitude: { type: Number },
+      longitude: { type: Number },
+      address: { type: String, trim: true },
+      town: { type: String, trim: true }
+    },
     
     children: [
       {
