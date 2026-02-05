@@ -65,8 +65,8 @@ const authRoutes = require("./src/routes/authRoutes");
 const protectedRoutes = require("./src/routes/protectedRoutes");
 const adminRoutes = require("./src/routes/adminRoutes");
 const tripRoutes = require("./src/routes/tripRoutes");
-const paymentRoutes = require("./src/routes/paymentRoutes");
-const withdrawalRoute = require("./src/routes/withdrawalRoute");
+//const paymentRoutes = require("./src/routes/paymentRoutes");
+//const withdrawalRoute = require("./src/routes/withdrawalRoute");
 
 // Public Auth Routes
 app.use("/api/auth", authRoutes);
@@ -81,10 +81,10 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/trips", tripRoutes);
 
 // Payment Routes
-app.use("/api/payments", paymentRoutes);
+//app.use("/api/payments", paymentRoutes);
 
 // Withdrawal Routes
-app.use("/api/withdrawals", withdrawalRoute);
+//app.use("/api/withdrawals", withdrawalRoute);
 
 // ============================
 // HEALTH & TEST ROUTES
