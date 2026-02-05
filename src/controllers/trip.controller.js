@@ -1,5 +1,5 @@
 const Trip = require("../models/trip");
-const Child = require("../models/Child");
+const Child = require("../models/child");
 const Driver = require("../models/Driver");
 const { getIO } = require("../socket");
 
