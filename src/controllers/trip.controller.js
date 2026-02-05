@@ -152,6 +152,48 @@ exports.updateDriverLocation = async (req, res) => {
 
 /**
  * ============================
+ * CREATE TRIP (ADMIN/DRIVER)
+ * ============================
+ */
+exports.createTrip = async (req, res) => {
+  try {
+    const {
+      parentId,
+      childId,
+      driverId,
+      tripType,
+      pickupLocation,
+      dropoffLocation,
+      pickupTime,
+      notes
+    } = req.body;
+
+    if (!childId || !tripType || !pickupLocation || !dropoffLocation || !pickupTime) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const trip = await Trip.create({
+      parentId: parentId || req.user.id,
+      childId,
+      driverId,
+      tripType,
+      pickupLocation,
+      dropoffLocation,
+      pickupTime,
+      status: "pending",
+      notes
+    });
+
+    getIO().emit("trip:created", trip);
+
+    res.status(201).json({ message: "Trip created successfully", trip });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+/**
+ * ============================
  * ADMIN: GET ALL TRIPS
  * ============================
  */
