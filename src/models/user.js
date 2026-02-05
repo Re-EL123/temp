@@ -19,38 +19,46 @@ const userSchema = new mongoose.Schema(
     latitude: { type: Number },
     longitude: { type: Number },
     
-    // Driver-specific fields
+    // Driver-specific fields - only required after onboarding is completed
     registrationNumber: { 
       type: String, 
       trim: true,
-      required: function() { return this.role === 'driver'; }
+      required: function() { 
+        return this.role === 'driver' && this.onboardingCompleted === true; 
+      }
     },
     passengerSeats: { 
-      type: Number, // NO trim on Number
-      required: function() { return this.role === 'driver'; }
+      type: Number,
+      required: function() { 
+        return this.role === 'driver' && this.onboardingCompleted === true; 
+      }
     },
     carBrand: { 
       type: String, 
       trim: true,
-      required: function() { return this.role === 'driver'; }
+      required: function() { 
+        return this.role === 'driver' && this.onboardingCompleted === true; 
+      }
     },
     carModel: { 
       type: String, 
       trim: true,
-      required: function() { return this.role === 'driver'; }
+      required: function() { 
+        return this.role === 'driver' && this.onboardingCompleted === true; 
+      }
     },
     driverPicture: { type: String, trim: true },
     
-    // NEW: driver online/offline status
+    // Driver online/offline status
     isActive: { type: Boolean, default: false },
     
-    // NEW: Additional vehicle details for Socket.IO integration
+    // Additional vehicle details for Socket.IO integration
     seats: { 
       type: Number, 
       default: function() { return this.passengerSeats || 4; }
     },
     
-    // NEW: Enhanced location tracking for real-time driver positioning
+    // Enhanced location tracking for real-time driver positioning
     currentLocation: {
       latitude: { type: Number },
       longitude: { type: Number },
@@ -58,6 +66,7 @@ const userSchema = new mongoose.Schema(
       town: { type: String, trim: true }
     },
     
+    // Parent-specific: reference to children
     children: [
       {
         type: mongoose.Schema.Types.ObjectId,
