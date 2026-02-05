@@ -65,6 +65,8 @@ const authRoutes = require("./src/routes/authRoutes");
 const protectedRoutes = require("./src/routes/protectedRoutes");
 const adminRoutes = require("./src/routes/adminRoutes");
 const tripRoutes = require("./src/routes/tripRoutes");
+const userRoutes = require('./src/routes/userRoutes');
+
 //const paymentRoutes = require("./src/routes/paymentRoutes");
 //const withdrawalRoute = require("./src/routes/withdrawalRoute");
 
@@ -79,6 +81,10 @@ app.use("/api/admin", adminRoutes);
 
 // Trip Routes (Socket-powered)
 app.use("/api/trips", tripRoutes);
+
+// User Routes
+app.use("/api/user", userRoutes);
+
 
 // Payment Routes
 //app.use("/api/payments", paymentRoutes);
