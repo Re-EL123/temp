@@ -262,6 +262,86 @@ Authorization: Bearer <token>
 
 ---
 
+## 4. Driver Management Endpoints
+
+### 4.1 Get Available Drivers
+**GET** `/api/users/drivers/available`
+
+#### Headers:
+```
+Authorization: Bearer <token>
+```
+
+#### Query Parameters:
+- `lat` (required): Latitude of pickup location
+- `lng` (required): Longitude of pickup location
+- `radius` (optional): Search radius in kilometers (default: 50km)
+
+#### Example Request:
+```
+GET /api/users/drivers/available?lat=-26.0667&lng=28.0667&radius=20
+```
+
+#### Response (200):
+```json
+{
+  "success": true,
+  "count": 3,
+  "drivers": [
+    {
+      "_id": "507f1f77bcf86cd799439013",
+      "name": "John Smith",
+      "email": "john.driver@example.com",
+      "vehicle": "Toyota Corolla - ABC123GP",
+      "carBrand": "Toyota",
+      "carModel": "Corolla",
+      "registrationNumber": "ABC123GP",
+      "seats": 4,
+      "rating": 4.5,
+      "distance": 1.2,
+      "latitude": -26.0717,
+      "longitude": 28.0717,
+      "address": "123 Main St, Johannesburg",
+      "available": true
+    },
+    {
+      "_id": "507f1f77bcf86cd799439014",
+      "name": "Sarah Johnson",
+      "email": "sarah.driver@example.com",
+      "vehicle": "Honda Civic - XYZ789GP",
+      "carBrand": "Honda",
+      "carModel": "Civic",
+      "registrationNumber": "XYZ789GP",
+      "seats": 5,
+      "rating": 4.5,
+      "distance": 2.3,
+      "latitude": -26.0597,
+      "longitude": 28.0697,
+      "address": "456 Second Ave, Johannesburg",
+      "available": true
+    }
+  ],
+  "searchLocation": {
+    "latitude": -26.0667,
+    "longitude": 28.0667,
+    "radius": 20
+  }
+}
+```
+
+#### Error Responses:
+- **400**: Missing or invalid coordinates
+- **401**: No token provided or invalid token
+- **500**: Server error
+
+#### Notes:
+- Drivers are sorted by distance (nearest first)
+- Only active drivers with completed onboarding are returned
+- Distance is calculated using the Haversine formula
+- Default search radius is 50km
+
+---
+
 ## CORS Headers
 All endpoints have CORS enabled with the following headers:
 ```
@@ -296,6 +376,7 @@ Common HTTP Status Codes:
 3. **Refresh Strategy**: Implement automatic login redirect on 401 responses
 4. **Error Handling**: Always check the `success` field and handle error messages appropriately
 5. **CORS**: All endpoints support CORS, no special handling needed
+6. **Location Tracking**: For drivers, ensure location updates are sent regularly to maintain accuracy
 
 ## Testing the API
 
@@ -324,5 +405,25 @@ const response = await fetch('https://temp-weld-rho.vercel.app/api/auth/register
 const data = await response.json();
 if (data.message) {
   console.log('Success:', data.message);
+}
+```
+
+### Example: Fetching Available Drivers
+```javascript
+const token = await AsyncStorage.getItem('userToken');
+const response = await fetch(
+  'https://temp-weld-rho.vercel.app/api/users/drivers/available?lat=-26.0667&lng=28.0667&radius=20',
+  {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  }
+);
+
+const data = await response.json();
+if (data.success) {
+  console.log(`Found ${data.count} drivers:`, data.drivers);
 }
 ```
