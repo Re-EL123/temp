@@ -361,4 +361,85 @@ router.delete('/children/:childId', authMiddleware, async (req, res) => {
   }
 });
 
+// ============================
+// DRIVER AVAILABILITY ROUTES
+// ============================
+
+// GET available drivers near location
+router.get('/drivers/available', authMiddleware, async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+
+    // Validate coordinates
+    if (!lat || !lng) {
+      return res.status(400).json({ 
+        message: 'Missing required parameters: lat, lng' 
+      });
+    }
+
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lng);
+
+    if (isNaN(latitude) || isNaN(longitude)) {
+      return res.status(400).json({ 
+        message: 'Invalid latitude or longitude values' 
+      });
+    }
+
+    // Find active drivers
+    const drivers = await User.find({
+      role: 'driver',
+      isActive: true,
+      onboardingCompleted: true,
+    }).select('-password');
+
+    // Calculate distance and format response
+    const availableDrivers = drivers.map(driver => {
+      // Simple distance calculation (Haversine formula)
+      const R = 6371; // Earth's radius in km
+      const dLat = (latitude - (driver.latitude || -26.0667)) * (Math.PI / 180);
+      const dLon = (longitude - (driver.longitude || 28.0667)) * (Math.PI / 180);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((driver.latitude || -26.0667) * (Math.PI / 180)) *
+          Math.cos(latitude * (Math.PI / 180)) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const distance = R * c;
+
+      return {
+        _id: driver._id,
+        name: `${driver.name} ${driver.surname}`,
+        vehicle: `${driver.carBrand} ${driver.carModel} - ${driver.registrationNumber}`,
+        rating: 4.5, // You can add a rating field to your User model later
+        distance: Math.round(distance * 10) / 10, // Round to 1 decimal
+        latitude: driver.latitude || -26.0667,
+        longitude: driver.longitude || 28.0667,
+        available: driver.isActive,
+        phone: driver.phone,
+        seats: driver.passengerSeats,
+      };
+    });
+
+    // Sort by distance (closest first)
+    availableDrivers.sort((a, b) => a.distance - b.distance);
+
+    console.log(`[GET Drivers Available] Found ${availableDrivers.length} drivers near (${latitude}, ${longitude})`);
+
+    return res.json({
+      success: true,
+      drivers: availableDrivers,
+      count: availableDrivers.length,
+    });
+  } catch (error) {
+    console.error('[GET Drivers Available] Error:', error);
+    return res.status(500).json({ 
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+});
+
+
 module.exports = router;
