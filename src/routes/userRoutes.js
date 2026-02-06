@@ -21,6 +21,126 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
+// ============================
+// USER PROFILE ROUTES
+// ============================
+
+// GET user profile
+router.get('/profile', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        surname: user.surname,
+        email: user.email,
+        role: user.role,
+        onboardingCompleted: user.onboardingCompleted,
+        phone: user.phone,
+        address: user.address,
+        location: user.location,
+        latitude: user.latitude,
+        longitude: user.longitude,
+        registrationNumber: user.registrationNumber,
+        passengerSeats: user.passengerSeats,
+        carBrand: user.carBrand,
+        carModel: user.carModel,
+        driverPicture: user.driverPicture,
+        isActive: user.isActive,
+        seats: user.seats,
+        currentLocation: user.currentLocation,
+      }
+    });
+  } catch (error) {
+    console.error('[GET Profile] Error:', error);
+    return res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ============================
+// DRIVER ONBOARDING ROUTES
+// ============================
+
+// POST driver onboarding
+router.post('/driver-onboarding', authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'driver') {
+      return res.status(403).json({ message: 'Only drivers can complete onboarding' });
+    }
+
+    const {
+      registrationNumber,
+      passengerSeats,
+      carBrand,
+      carModel,
+      phone,
+      address,
+    } = req.body;
+
+    // Validation
+    if (!registrationNumber || !passengerSeats || !carBrand || !carModel) {
+      return res.status(400).json({
+        message: 'Missing required fields: registrationNumber, passengerSeats, carBrand, carModel',
+      });
+    }
+
+    const parsedSeats = parseInt(passengerSeats, 10);
+    if (isNaN(parsedSeats) || parsedSeats < 1) {
+      return res.status(400).json({ message: 'Invalid passenger seats value' });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        registrationNumber: registrationNumber.trim(),
+        passengerSeats: parsedSeats,
+        carBrand: carBrand.trim(),
+        carModel: carModel.trim(),
+        phone: phone ? phone.trim() : '',
+        address: address ? address.trim() : '',
+        onboardingCompleted: true,
+      },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Driver onboarding completed successfully',
+      user: {
+        id: updatedUser._id,
+        name: updatedUser.name,
+        surname: updatedUser.surname,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        onboardingCompleted: updatedUser.onboardingCompleted,
+        phone: updatedUser.phone,
+        address: updatedUser.address,
+        registrationNumber: updatedUser.registrationNumber,
+        passengerSeats: updatedUser.passengerSeats,
+        carBrand: updatedUser.carBrand,
+        carModel: updatedUser.carModel,
+      },
+    });
+  } catch (error) {
+    console.error('[POST Driver Onboarding] Error:', error);
+    return res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ============================
+// CHILDREN MANAGEMENT ROUTES
+// ============================
+
 // GET all children for parent
 router.get('/children', authMiddleware, async (req, res) => {
   try {
@@ -111,7 +231,13 @@ router.put('/children/:childId', authMiddleware, async (req, res) => {
 
     if (name) updateData.name = name;
     if (surname) updateData.surname = surname;
-    if (age) updateData.age = parseInt(age, 10);
+    if (age) {
+      const parsedAge = parseInt(age, 10);
+      if (isNaN(parsedAge) || parsedAge < 0) {
+        return res.status(400).json({ message: 'Invalid age value' });
+      }
+      updateData.age = parsedAge;
+    }
     if (gender) updateData.gender = gender.toLowerCase();
     if (schoolName) updateData.schoolName = schoolName;
     if (homeAddress) updateData.homeAddress = homeAddress;
@@ -170,3 +296,4 @@ router.delete('/children/:childId', authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+
