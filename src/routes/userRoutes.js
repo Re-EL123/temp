@@ -63,6 +63,64 @@ router.get('/profile', authMiddleware, async (req, res) => {
   }
 });
 
+// PUT update user profile
+router.put('/profile', authMiddleware, async (req, res) => {
+  try {
+    const { isActive, phone, address, location, latitude, longitude } = req.body;
+    
+    const updateData = {};
+    
+    // Only update fields that are provided
+    if (typeof isActive === 'boolean') updateData.isActive = isActive;
+    if (phone !== undefined) updateData.phone = phone;
+    if (address !== undefined) updateData.address = address;
+    if (location !== undefined) updateData.location = location;
+    if (latitude !== undefined) updateData.latitude = latitude;
+    if (longitude !== undefined) updateData.longitude = longitude;
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user.id,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    console.log(`[PUT Profile] User ${req.user.id} updated:`, updateData);
+
+    return res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: {
+        id: updatedUser._id,
+        name: updatedUser.name,
+        surname: updatedUser.surname,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        onboardingCompleted: updatedUser.onboardingCompleted,
+        phone: updatedUser.phone,
+        address: updatedUser.address,
+        location: updatedUser.location,
+        latitude: updatedUser.latitude,
+        longitude: updatedUser.longitude,
+        isActive: updatedUser.isActive,
+        registrationNumber: updatedUser.registrationNumber,
+        passengerSeats: updatedUser.passengerSeats,
+        carBrand: updatedUser.carBrand,
+        carModel: updatedUser.carModel,
+        driverPicture: updatedUser.driverPicture,
+        seats: updatedUser.seats,
+        currentLocation: updatedUser.currentLocation,
+      }
+    });
+  } catch (error) {
+    console.error('[PUT Profile] Error:', error);
+    return res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // ============================
 // DRIVER ONBOARDING ROUTES
 // ============================
@@ -112,6 +170,8 @@ router.post('/driver-onboarding', authMiddleware, async (req, res) => {
     if (!updatedUser) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    console.log(`[POST Driver Onboarding] User ${req.user.id} completed onboarding`);
 
     return res.json({
       success: true,
@@ -210,6 +270,8 @@ router.post('/children', authMiddleware, async (req, res) => {
       { new: true }
     );
 
+    console.log(`[POST Children] Child ${newChild._id} added for user ${req.user.id}`);
+
     return res.status(201).json({
       success: true,
       message: 'Child added successfully',
@@ -256,6 +318,8 @@ router.put('/children/:childId', authMiddleware, async (req, res) => {
       return res.status(404).json({ message: 'Child not found' });
     }
 
+    console.log(`[PUT Children] Child ${childId} updated for user ${req.user.id}`);
+
     return res.json({
       success: true,
       message: 'Child updated successfully',
@@ -285,6 +349,8 @@ router.delete('/children/:childId', authMiddleware, async (req, res) => {
       $pull: { children: childId },
     });
 
+    console.log(`[DELETE Children] Child ${childId} deleted for user ${req.user.id}`);
+
     return res.json({
       success: true,
       message: 'Child deleted successfully',
@@ -296,4 +362,3 @@ router.delete('/children/:childId', authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
-
