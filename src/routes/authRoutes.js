@@ -5,8 +5,8 @@ const User = require("../models/user");
 
 const router = express.Router();
 
-// Handle preflight for auth routes
-router.options('*', (req, res) => {
+// Handle preflight for auth routes (fixed wildcard)
+router.options(/(.*)/, (req, res) => {
   res.status(200).end();
 });
 
@@ -17,7 +17,9 @@ router.post("/register", async (req, res) => {
     const { name, surname, email, password, role } = req.body;
 
     if (!name || !surname || !email || !password) {
-      return res.status(400).json({ message: "Name, Surname, email & password required" });
+      return res
+        .status(400)
+        .json({ message: "Name, Surname, email & password required" });
     }
 
     // Check if user already exists
