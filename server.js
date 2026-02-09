@@ -61,7 +61,7 @@ app.use("/api/trips", tripRoutes);
 // 🎉 SUPPORTS BOTH /api/user/* AND /api/users/* - EVERYTHING PRESERVED
 app.use("/api/user", userRoutes);   // ✅ Your existing routes
 app.use("/api/users", userRoutes);
-app.use("/api/drivers", userRoutes); // ✅ Frontend drivers/available
+app.use("/api/drivers/available", userRoutes); // ✅ Frontend drivers/available
 
 
 // Commented routes preserved
