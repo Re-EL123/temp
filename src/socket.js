@@ -17,10 +17,15 @@ const initSocket = (server) => {
     transports: ["websocket", "polling"],
     pingTimeout: 60000,
     pingInterval: 25000,
+    allowEIO3: true, // Allow Engine.IO v3 clients
+    connectTimeout: 45000,
+    maxHttpBufferSize: 1e6, // 1MB
   });
 
   io.on("connection", (socket) => {
-    console.log(`[Socket.IO] Client connected: ${socket.id}`);
+    console.log(`✅ [Socket.IO] Client connected: ${socket.id}`);
+    console.log(`   Transport: ${socket.conn.transport.name}`);
+    console.log(`   Total connections: ${io.engine.clientsCount}`);
 
     // ============================
     // USER AUTHENTICATION
@@ -30,7 +35,7 @@ const initSocket = (server) => {
     socket.on("join_user_room", (userId) => {
       if (userId) {
         socket.join(userId.toString());
-        console.log(`[Socket.IO] User ${userId} joined room ${userId}`);
+        console.log(`👤 [Socket.IO] User ${userId} joined room ${userId}`);
         socket.emit("room_joined", { userId, roomId: userId });
       }
     });
@@ -43,7 +48,7 @@ const initSocket = (server) => {
     socket.on("join_trip", (tripId) => {
       if (tripId) {
         socket.join(`trip_${tripId}`);
-        console.log(`[Socket.IO] Socket ${socket.id} joined trip room: trip_${tripId}`);
+        console.log(`🚗 [Socket.IO] Socket ${socket.id} joined trip room: trip_${tripId}`);
         socket.emit("trip_joined", { tripId });
       }
     });
@@ -52,7 +57,7 @@ const initSocket = (server) => {
     socket.on("leave_trip", (tripId) => {
       if (tripId) {
         socket.leave(`trip_${tripId}`);
-        console.log(`[Socket.IO] Socket ${socket.id} left trip room: trip_${tripId}`);
+        console.log(`🚪 [Socket.IO] Socket ${socket.id} left trip room: trip_${tripId}`);
       }
     });
 
@@ -73,7 +78,7 @@ const initSocket = (server) => {
           },
         });
         
-        console.log(`[Socket.IO] Location update for trip ${tripId}: (${latitude}, ${longitude})`);
+        console.log(`📍 [Socket.IO] Location update for trip ${tripId}: (${latitude}, ${longitude})`);
       }
     });
 
@@ -93,7 +98,7 @@ const initSocket = (server) => {
           timestamp: new Date().toISOString(),
         });
         
-        console.log(`[Socket.IO] Trip ${tripId} accepted notification sent to parent ${parentId}`);
+        console.log(`✅ [Socket.IO] Trip ${tripId} accepted notification sent to parent ${parentId}`);
       }
     });
 
@@ -110,7 +115,7 @@ const initSocket = (server) => {
           timestamp: new Date().toISOString(),
         });
         
-        console.log(`[Socket.IO] Trip ${tripId} declined notification sent to parent ${parentId}`);
+        console.log(`❌ [Socket.IO] Trip ${tripId} declined notification sent to parent ${parentId}`);
       }
     });
 
@@ -127,7 +132,7 @@ const initSocket = (server) => {
           timestamp: new Date().toISOString(),
         });
         
-        console.log(`[Socket.IO] Trip ${tripId} started notification sent to parent ${parentId}`);
+        console.log(`🚀 [Socket.IO] Trip ${tripId} started notification sent to parent ${parentId}`);
       }
     });
 
@@ -144,7 +149,7 @@ const initSocket = (server) => {
           timestamp: new Date().toISOString(),
         });
         
-        console.log(`[Socket.IO] Trip ${tripId} completed notification sent to parent ${parentId}`);
+        console.log(`🏁 [Socket.IO] Trip ${tripId} completed notification sent to parent ${parentId}`);
       }
     });
 
@@ -161,7 +166,7 @@ const initSocket = (server) => {
           timestamp: new Date().toISOString(),
         });
         
-        console.log(`[Socket.IO] Trip ${tripId} cancelled notification sent to user ${userId}`);
+        console.log(`🚫 [Socket.IO] Trip ${tripId} cancelled notification sent to user ${userId}`);
       }
     });
 
@@ -183,7 +188,7 @@ const initSocket = (server) => {
           timestamp: new Date().toISOString(),
         });
         
-        console.log(`[Socket.IO] New trip request ${tripId} sent to driver ${driverId}`);
+        console.log(`📢 [Socket.IO] New trip request ${tripId} sent to driver ${driverId}`);
       }
     });
 
@@ -202,7 +207,7 @@ const initSocket = (server) => {
           timestamp: new Date().toISOString(),
         });
         
-        console.log(`[Socket.IO] Message sent from ${senderId} to ${receiverId}`);
+        console.log(`💬 [Socket.IO] Message sent from ${senderId} to ${receiverId}`);
       }
     });
 
@@ -232,7 +237,7 @@ const initSocket = (server) => {
         timestamp: new Date().toISOString(),
       });
       
-      console.log(`[Socket.IO] EMERGENCY ALERT for trip ${tripId} from user ${userId}`);
+      console.log(`🚨 [Socket.IO] EMERGENCY ALERT for trip ${tripId} from user ${userId}`);
     });
 
     // ============================
@@ -251,16 +256,36 @@ const initSocket = (server) => {
     // ============================
 
     socket.on("disconnect", (reason) => {
-      console.log(`[Socket.IO] Client disconnected: ${socket.id} - Reason: ${reason}`);
+      console.log(`🔌 [Socket.IO] Client disconnected: ${socket.id}`);
+      console.log(`   Reason: ${reason}`);
+      console.log(`   Remaining connections: ${io.engine.clientsCount}`);
     });
 
     // Error handling
     socket.on("error", (error) => {
-      console.error(`[Socket.IO] Socket error: ${socket.id}`, error);
+      console.error(`❌ [Socket.IO] Socket error: ${socket.id}`, error);
+    });
+
+    // Connection error handling
+    socket.conn.on("error", (error) => {
+      console.error(`❌ [Socket.IO] Connection error: ${socket.id}`, error);
+    });
+  });
+
+  // Engine.IO error handling
+  io.engine.on("connection_error", (err) => {
+    console.error("❌ [Socket.IO] Engine connection error:", {
+      code: err.code,
+      message: err.message,
+      context: err.context,
     });
   });
 
   console.log("✅ Socket.IO initialized successfully");
+  console.log(`   Allowed transports: websocket, polling`);
+  console.log(`   CORS origin: *`);
+  console.log(`   Ping interval: 25s, timeout: 60s`);
+  
   return io;
 };
 
@@ -284,7 +309,7 @@ const getIO = () => {
 const emitToUser = (userId, event, data) => {
   if (io && userId) {
     io.to(userId.toString()).emit(event, data);
-    console.log(`[Socket.IO] Event '${event}' emitted to user ${userId}`);
+    console.log(`📤 [Socket.IO] Event '${event}' emitted to user ${userId}`);
   }
 };
 
@@ -297,7 +322,7 @@ const emitToUser = (userId, event, data) => {
 const emitToTrip = (tripId, event, data) => {
   if (io && tripId) {
     io.to(`trip_${tripId}`).emit(event, data);
-    console.log(`[Socket.IO] Event '${event}' emitted to trip ${tripId}`);
+    console.log(`📤 [Socket.IO] Event '${event}' emitted to trip ${tripId}`);
   }
 };
 
@@ -309,8 +334,21 @@ const emitToTrip = (tripId, event, data) => {
 const emitToAll = (event, data) => {
   if (io) {
     io.emit(event, data);
-    console.log(`[Socket.IO] Event '${event}' broadcasted to all clients`);
+    console.log(`📢 [Socket.IO] Event '${event}' broadcasted to all clients`);
   }
+};
+
+/**
+ * Get connection statistics
+ * @returns {Object} Connection stats
+ */
+const getConnectionStats = () => {
+  if (!io) return null;
+  return {
+    totalConnections: io.engine.clientsCount,
+    rooms: Array.from(io.sockets.adapter.rooms.keys()),
+    timestamp: new Date().toISOString(),
+  };
 };
 
 module.exports = {
@@ -319,4 +357,5 @@ module.exports = {
   emitToUser,
   emitToTrip,
   emitToAll,
+  getConnectionStats,
 };
