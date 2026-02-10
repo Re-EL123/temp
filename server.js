@@ -1,11 +1,11 @@
-// server.js - FULLY FIXED WITH BOTH /api/user AND /api/users SUPPORT
+// server.js - FULLY FIXED WITH BOTH /api/user AND /api/users SUPPORT + SOCKET.IO
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const http = require("http");
 
 const connectDB = require("./src/config/db");
-const { initSocket } = require("./src/socket");
+const { initSocket, getConnectionStats } = require("./src/socket");
 
 // Load env variables early
 dotenv.config();
@@ -17,7 +17,11 @@ app.enable("trust proxy");
 
 // Request logging - CONSOLIDATED (removed duplicate)
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.url}`);
+  if (req.method === 'OPTIONS') {
+    console.log(`   CORS Preflight: ${req.headers.origin || 'no origin'}`);
+  }
   next();
 });
 
@@ -60,9 +64,8 @@ app.use("/api/trips", tripRoutes);
 
 // 🎉 SUPPORTS BOTH /api/user/* AND /api/users/* - EVERYTHING PRESERVED
 app.use("/api/user", userRoutes);   // ✅ Your existing routes
-app.use("/api/users", userRoutes);
+app.use("/api/users", userRoutes);  // ✅ Frontend calls
 app.use("/api/drivers/available", userRoutes); // ✅ Frontend drivers/available
-
 
 // Commented routes preserved
 /*
@@ -76,9 +79,16 @@ app.use("/api/withdrawals", withdrawalRoute);
 // HEALTH & TEST ROUTES - UPDATED
 // ============================
 app.get("/", (req, res) => {
+  const stats = getConnectionStats();
   res.json({ 
     message: "Safe School Ride API 🚀", 
     timestamp: new Date().toISOString(),
+    version: "2.0.0",
+    socketIO: {
+      enabled: true,
+      endpoint: "/socket.io",
+      ...(stats && { connections: stats.totalConnections })
+    },
     routes: {
       auth: "/api/auth",
       users: ["/api/user", "/api/users"],  // ✅ Both supported
@@ -92,7 +102,18 @@ app.get("/ping", (req, res) => {
   res.json({ 
     message: "pong", 
     timestamp: new Date().toISOString(),
-    status: "healthy"
+    status: "healthy",
+    uptime: process.uptime()
+  });
+});
+
+// Socket.IO status endpoint
+app.get("/socket/status", (req, res) => {
+  const stats = getConnectionStats();
+  res.json({
+    success: true,
+    socketIO: stats || { enabled: true, connections: 0 },
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -110,7 +131,8 @@ app.use((req, res, next) => {
     available: {
       users: ["/api/user", "/api/users"],
       drivers: ["/api/users/drivers/available", "/api/user/drivers/available"],
-      profile: ["/api/user/profile", "/api/users/profile"]
+      profile: ["/api/user/profile", "/api/users/profile"],
+      socket: "/socket.io/"
     }
   });
 });
@@ -140,12 +162,16 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 
 // Initialize Socket.IO
-initSocket(server);
+const io = initSocket(server);
+
+// Log Socket.IO initialization
+console.log("📡 Socket.IO server ready at /socket.io/");
 
 // Start server
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
-  console.log(`📍 Available routes:`);
+  console.log(`\n🚀 Server running on http://0.0.0.0:${PORT}`);
+  console.log(`📡 Socket.IO endpoint: ws://0.0.0.0:${PORT}/socket.io/`);
+  console.log(`\n📍 Available routes:`);
   console.log(`   👉 /api/auth/*`);
   console.log(`   👉 /api/user/*    ← Your existing routes ✅`);
   console.log(`   👉 /api/users/*   ← Frontend calls ✅`);
@@ -153,14 +179,44 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`   👉 /api/user/drivers/available`);
   console.log(`   👉 /api/trips/*`);
   console.log(`   👉 /api/admin/*`);
+  console.log(`   👉 /socket.io/    ← WebSocket endpoint 🔌\n`);
+});
+
+// Server error handling
+server.on('error', (error) => {
+  console.error('❌ Server error:', error);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use`);
+    process.exit(1);
+  }
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+  console.log('\n🛑 SIGTERM received, shutting down gracefully');
   server.close(() => {
-    console.log('Process terminated');
+    console.log('✅ HTTP server closed');
+    io.close(() => {
+      console.log('✅ Socket.IO closed');
+      process.exit(0);
+    });
   });
+});
+
+process.on('SIGINT', () => {
+  console.log('\n🛑 SIGINT received, shutting down gracefully');
+  server.close(() => {
+    console.log('✅ HTTP server closed');
+    io.close(() => {
+      console.log('✅ Socket.IO closed');
+      process.exit(0);
+    });
+  });
+});
+
+// Unhandled rejection handler
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 // Export for Vercel serverless
