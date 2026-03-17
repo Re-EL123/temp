@@ -11,7 +11,7 @@
 //   • Optional push notifications & Driver capacity
 // ═══════════════════════════════════════════════════════════════
 
-const Trip = require("../models/Trip");
+const Trip = require("../models/trip.model");
 const User = require("../models/user");
 const { getIO } = require("../socket");
 const mongoose = require("mongoose");
