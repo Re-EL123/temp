@@ -1,6 +1,6 @@
 const Trip = require("../models/trip.model");
-const Child = require("../models/Child");
-const Driver = require("../models/Driver");
+const Child = require("../models/child");
+const Driver = require("../models/driver");
 const { getIO } = require("../socket");
 const { sendPushNotification } = require("../services/notification.service");
 const mongoose = require("mongoose");
