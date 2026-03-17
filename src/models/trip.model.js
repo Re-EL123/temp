@@ -1,225 +1,461 @@
-const mongoose = require('mongoose');
+// src/models/trip.js
+// ═══════════════════════════════════════════════════════════════
+// UNIFIED TRIP MODEL
+// Original working schema + marketplace, ratings, driver location,
+// recurring schedule, fare breakdown, capacity support.
+// ═══════════════════════════════════════════════════════════════
 
-/**
- * Trip Schema
- * Core model for managing transport requests, tracking sessions, and history.
- * A Trip links a parent, multiple children, and a driver.
- */
-const tripSchema = new mongoose.Schema({
-  // The person who requested the trip
-  parent: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
+const mongoose = require("mongoose");
 
-  // Parent display name (denormalized for quick access)
-  parentName: {
-    type: String,
-  },
-
-  // List of children being transported in this session
-  children: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Child',
-  }],
-
-  // Embedded child details (from frontend for once-off trips)
-  childrenDetails: [{
-    childId: { type: mongoose.Schema.Types.ObjectId, ref: 'Child' },
-    childName: { type: String },
-    school: { type: String },
-    homeAddress: { type: String },
-    schoolAddress: { type: String },
-    parentContact: { type: String },
-  }],
-
-  // The assigned driver (null if in market/pending_assignment)
-  driver: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Driver',
-  },
-
-  // Driver display info (denormalized)
-  driverName: {
-    type: String,
-  },
-  driverVehicle: {
-    type: String,
-  },
-
-  /**
-   * once-off: Single pickup/dropoff.
-   * weekly/monthly: Subscriptions (logic handled in recurringSchedule).
-   */
-  tripType: {
-    type: String,
-    enum: ['once-off', 'weekly', 'monthly'],
-    default: 'once-off',
-  },
-
-  /**
-   * Trip Lifecycle:
-   * 1. pending: Request created, waiting for driver acceptance.
-   * 2. pending_assignment: Visible in Marketplace for drivers to claim.
-   * 3. assigned / accepted: Driver linked, scheduled for future.
-   * 4. in_progress / in-progress: Driver has started the pickup/ride (Live tracking active).
-   * 5. completed: Safely dropped off.
-   * 6. cancelled: Terminated by user/system.
-   * 7. declined: Rejected by driver.
-   */
-  status: {
-    type: String,
-    enum: [
-      'pending',
-      'pending_assignment',
-      'assigned',
-      'accepted',
-      'in_progress',
-      'in-progress',
-      'completed',
-      'cancelled',
-      'declined',
-    ],
-    default: 'pending',
-  },
-
-  // Pickup GeoJSON Point
-  pickupLocation: {
-    type: {
+const tripSchema = new mongoose.Schema(
+  {
+    // ─── Trip Type ────────────────────────────────────────
+    tripType: {
       type: String,
-      enum: ['Point'],
-      default: 'Point',
+      enum: ["once-off", "recurring", "scheduled", "weekly", "monthly"],
+      default: "once-off",
+      required: true,
     },
-    coordinates: {
-      type: [Number], // [longitude, latitude]
-      default: [0, 0],
-    },
-    address: String,
-  },
 
-  // Dropoff GeoJSON Point
-  dropoffLocation: {
-    type: {
+    // ─── Parent Information ───────────────────────────────
+    parentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    parentName: {
       type: String,
-      enum: ['Point'],
-      default: 'Point',
+      required: true,
     },
-    coordinates: {
-      type: [Number], // [longitude, latitude]
-      default: [0, 0],
+
+    // ─── Driver Information ───────────────────────────────
+    // NOT required: marketplace trips start without a driver
+    driverId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
     },
-    address: String,
-  },
+    driverName: {
+      type: String,
+      default: "",
+    },
+    driverVehicle: {
+      type: String,
+      default: "",
+    },
 
-  scheduledDate: {
-    type: Date,
-  },
+    // ─── Trip Schedule ────────────────────────────────────
+    date: {
+      type: Date,
+      required: true,
+      index: true,
+    },
+    pickupTime: {
+      type: String,
+      required: true,
+    },
 
-  pickupTime: {
-    type: String, // Format: "HH:mm"
-  },
+    // ─── Locations ────────────────────────────────────────
+    pickupLocation: {
+      latitude: {
+        type: Number,
+        required: true,
+      },
+      longitude: {
+        type: Number,
+        required: true,
+      },
+      address: {
+        type: String,
+        required: true,
+      },
+    },
+    dropoffLocation: {
+      latitude: {
+        type: Number,
+        required: true,
+      },
+      longitude: {
+        type: Number,
+        required: true,
+      },
+      address: {
+        type: String,
+        required: true,
+      },
+    },
 
-  activity: String, // Context for the trip (e.g., "After school soccer")
-  instructions: String, // Specific driver notes
-
-  // Drivers who have been notified about this request
-  notifiedDrivers: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Driver',
-  }],
-
-  // Subscription-based ride details
-  recurringSchedule: {
-    days: [String], // ["Monday", "Wednesday"]
-    startDate: Date,
-    endDate: Date,
-  },
-
-  // Route data from OSRM/routing service
-  route: {
-    distance: { type: Number }, // meters
-    duration: { type: Number }, // seconds
-    coordinates: [{
+    // ─── Current Location (real-time tracking) ────────────
+    currentLocation: {
       latitude: Number,
       longitude: Number,
-    }],
-  },
+      speed: Number,
+      heading: Number,
+      timestamp: Date,
+    },
 
-  // Fare breakdown from fare calculator
-  fare: { type: Number, default: 0 },
-  fareBreakdown: {
-    base: { type: Number },
-    distance: { type: Number },
-    time: { type: Number },
-    childSurcharge: { type: Number },
-    discount: { type: Number },
-    total: { type: Number },
-  },
+    // ─── Driver Location (alternative tracking field) ─────
+    driverLocation: {
+      latitude: Number,
+      longitude: Number,
+      updatedAt: Date,
+    },
 
-  estimatedDuration: { type: Number, default: 0 }, // minutes
-  estimatedDistance: { type: String, default: "0" }, // km as string
+    // ─── Route Information ────────────────────────────────
+    route: {
+      distance: Number,
+      duration: Number,
+      coordinates: [
+        {
+          latitude: Number,
+          longitude: Number,
+        },
+      ],
+    },
 
-  distance: { type: Number, default: 0 }, // in km (legacy)
-  duration: { type: Number, default: 0 }, // in minutes (legacy)
-
-  // Timeline audit fields
-  requestedAt: { type: Date, default: Date.now },
-  acceptedAt: Date,
-  startedAt: Date,
-  completedAt: Date,
-  cancelledAt: Date,
-  declinedAt: Date,
-
-  /**
-   * Rating: Submitted by parent after trip completion.
-   */
-  rating: {
-    value: { type: Number, min: 1, max: 5 },
-    comment: { type: String },
-    ratedAt: { type: Date },
-  },
-
-  /**
-   * Live Tracking Data:
-   * Updated via Socket.IO/POST during 'in_progress' status.
-   * Used by the frontend polling endpoint GET /api/trips/:tripId/status
-   */
-  currentLocation: {
-    type: {
+    // ─── Trip Status ──────────────────────────────────────
+    status: {
       type: String,
-      enum: ['Point'],
-      default: 'Point',
+      enum: [
+        "pending",
+        "pending_assignment",
+        "accepted",
+        "declined",
+        "in-progress",
+        "completed",
+        "cancelled",
+      ],
+      default: "pending",
+      required: true,
+      index: true,
     },
-    coordinates: {
-      type: [Number],
-      default: [0, 0],
-    },
-    heading: { type: Number, default: 0 },
-    speed: { type: Number, default: 0 },
-  },
 
-  // Denormalized driver location for frontend polling (lat/lng format)
-  driverLocation: {
-    latitude: { type: Number },
-    longitude: { type: Number },
-    updatedAt: { type: Date },
+    // ─── Children / Passengers ────────────────────────────
+    children: [
+      {
+        childId: {
+          type: String,
+        },
+        childName: {
+          type: String,
+          default: "",
+        },
+        school: String,
+        homeAddress: String,
+        schoolAddress: String,
+        parentContact: String,
+      },
+    ],
+
+    // ─── Trip Details ─────────────────────────────────────
+    activity: {
+      type: String,
+      default: "",
+    },
+    instructions: {
+      type: String,
+      default: "",
+    },
+
+    // ─── Financial Information ────────────────────────────
+    fare: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    actualFare: {
+      type: Number,
+      min: 0,
+    },
+    fareBreakdown: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    estimatedDistance: {
+      type: String,
+      default: "0",
+    },
+    estimatedDuration: {
+      type: Number,
+      default: 0,
+    },
+
+    // ─── Recurring Schedule ───────────────────────────────
+    recurringSchedule: {
+      days: [String],
+      startDate: Date,
+    },
+
+    // ─── Status Timestamps ────────────────────────────────
+    createdAt: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    acceptedAt: {
+      type: Date,
+    },
+    declinedAt: {
+      type: Date,
+    },
+    startedAt: {
+      type: Date,
+    },
+    completedAt: {
+      type: Date,
+    },
+    cancelledAt: {
+      type: Date,
+    },
+
+    // ─── Cancellation / Decline Information ───────────────
+    cancelledBy: {
+      type: String,
+      enum: ["parent", "driver", "admin", "system", "user", null],
+    },
+    cancellationReason: {
+      type: String,
+    },
+    declineReason: {
+      type: String,
+    },
+
+    // ─── Completion Notes ─────────────────────────────────
+    completionNotes: {
+      type: String,
+    },
+
+    // ─── Estimated Arrival (for tracking) ─────────────────
+    estimatedArrival: {
+      type: Date,
+    },
+
+    // ─── Rating ───────────────────────────────────────────
+    rating: {
+      value: {
+        type: Number,
+        min: 1,
+        max: 5,
+      },
+      comment: String,
+      ratedAt: Date,
+    },
+
+    // ─── Payment ──────────────────────────────────────────
+    paymentStatus: {
+      type: String,
+      enum: ["pending", "paid", "refunded"],
+      default: "pending",
+    },
+    paymentMethod: {
+      type: String,
+    },
+    transactionId: {
+      type: String,
+    },
+
+    // ─── Metadata ─────────────────────────────────────────
+    metadata: {
+      type: Map,
+      of: String,
+    },
   },
-}, {
-  timestamps: true,
+  {
+    timestamps: true,
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════
+//  INDEXES FOR PERFORMANCE
+// ═══════════════════════════════════════════════════════════════
+
+tripSchema.index({ driverId: 1, status: 1, date: 1 });
+tripSchema.index({ parentId: 1, status: 1, date: 1 });
+tripSchema.index({ status: 1, date: 1 });
+
+// ═══════════════════════════════════════════════════════════════
+//  VIRTUAL PROPERTIES
+// ═══════════════════════════════════════════════════════════════
+
+// Trip duration in minutes
+tripSchema.virtual("durationMinutes").get(function () {
+  if (this.startedAt && this.completedAt) {
+    return Math.round((this.completedAt - this.startedAt) / 1000 / 60);
+  }
+  return null;
 });
 
-/**
- * Geospatial indexing:
- * Enables MongoDB $near and $geoWithin queries for driver discovery.
- */
-tripSchema.index({ pickupLocation: '2dsphere' });
-tripSchema.index({ dropoffLocation: '2dsphere' });
-tripSchema.index({ currentLocation: '2dsphere' });
+// Is the trip today?
+tripSchema.virtual("isToday").get(function () {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tripDate = new Date(this.date);
+  tripDate.setHours(0, 0, 0, 0);
+  return today.getTime() === tripDate.getTime();
+});
 
-// Performance indexes
-tripSchema.index({ parent: 1, status: 1 });
-tripSchema.index({ driver: 1, status: 1 });
-tripSchema.index({ status: 1, scheduledDate: -1 });
+// Is the trip upcoming?
+tripSchema.virtual("isUpcoming").get(function () {
+  return (
+    this.date > new Date() &&
+    ["pending", "pending_assignment", "accepted"].includes(this.status)
+  );
+});
 
-module.exports = mongoose.model('Trip', tripSchema);
+// ═══════════════════════════════════════════════════════════════
+//  INSTANCE METHODS
+// ═══════════════════════════════════════════════════════════════
+
+// Calculate time until pickup
+tripSchema.methods.getTimeUntilPickup = function () {
+  try {
+    const [hours, minutes] = this.pickupTime.split(":").map(Number);
+    const pickupDate = new Date(this.date);
+    pickupDate.setHours(hours, minutes, 0, 0);
+
+    const now = new Date();
+    const diff = pickupDate.getTime() - now.getTime();
+
+    if (diff < 0) return "Now";
+
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hrs = Math.floor(
+      (diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+    );
+    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (days > 0) return `${days}d ${hrs}h`;
+    if (hrs > 0) return `${hrs}h ${mins}m`;
+    return `${mins}m`;
+  } catch (error) {
+    return "Soon";
+  }
+};
+
+// Can this trip be cancelled?
+tripSchema.methods.canBeCancelled = function () {
+  return !["completed", "cancelled"].includes(this.status);
+};
+
+// Can this trip be started?
+tripSchema.methods.canBeStarted = function () {
+  return this.status === "accepted";
+};
+
+// Can this trip be accepted?
+tripSchema.methods.canBeAccepted = function () {
+  return this.status === "pending" || this.status === "pending_assignment";
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  STATIC METHODS
+// ═══════════════════════════════════════════════════════════════
+
+// Get pending requests for driver (includes marketplace)
+tripSchema.statics.getPendingRequestsForDriver = function (driverId) {
+  return this.find({
+    $or: [
+      { driverId, status: "pending" },
+      { status: "pending_assignment" },
+    ],
+  }).sort({ createdAt: -1 });
+};
+
+// Get upcoming trips for driver
+tripSchema.statics.getUpcomingTripsForDriver = function (driverId) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  return this.find({
+    driverId,
+    status: { $in: ["accepted", "in-progress"] },
+    date: { $gte: now },
+  }).sort({ date: 1, pickupTime: 1 });
+};
+
+// Get active trips for driver
+tripSchema.statics.getActiveTripsForDriver = function (driverId) {
+  return this.find({
+    driverId,
+    status: "in-progress",
+  });
+};
+
+// Get trip history for parent
+tripSchema.statics.getHistoryForParent = function (parentId, limit = 10) {
+  return this.find({
+    parentId,
+    status: { $in: ["completed", "cancelled"] },
+  })
+    .sort({ completedAt: -1 })
+    .limit(limit);
+};
+
+// Get trip statistics for driver
+tripSchema.statics.getDriverStats = async function (
+  driverId,
+  startDate,
+  endDate
+) {
+  const filter = {
+    driverId,
+    status: "completed",
+  };
+
+  if (startDate || endDate) {
+    filter.completedAt = {};
+    if (startDate) filter.completedAt.$gte = new Date(startDate);
+    if (endDate) filter.completedAt.$lte = new Date(endDate);
+  }
+
+  const trips = await this.find(filter);
+
+  const ratedTrips = trips.filter((t) => t.rating && t.rating.value);
+
+  return {
+    totalTrips: trips.length,
+    totalEarnings: trips.reduce(
+      (sum, trip) => sum + (trip.actualFare || trip.fare),
+      0
+    ),
+    totalDistance: trips.reduce(
+      (sum, trip) => sum + parseFloat(trip.estimatedDistance || 0),
+      0
+    ),
+    averageRating:
+      ratedTrips.length > 0
+        ? ratedTrips.reduce((sum, t) => sum + t.rating.value, 0) /
+          ratedTrips.length
+        : 0,
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  MIDDLEWARE
+// ═══════════════════════════════════════════════════════════════
+
+// Update updatedAt before saving
+tripSchema.pre("save", function (next) {
+  this.updatedAt = new Date();
+  next();
+});
+
+// Update updatedAt before updating
+tripSchema.pre("findOneAndUpdate", function (next) {
+  this.set({ updatedAt: new Date() });
+  next();
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  EXPORT
+// ═══════════════════════════════════════════════════════════════
+
+const Trip = mongoose.model("Trip", tripSchema);
+
+module.exports = Trip;
