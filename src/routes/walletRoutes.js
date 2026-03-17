@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middleware/authMiddleware");
 const Trip = require("../models/trip.model");
-const Driver = require("../models/driver");
+const Driver = require("../models/Driver");
 
 /**
  * GET Wallet Stats for Driver

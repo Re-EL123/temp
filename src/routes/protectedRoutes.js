@@ -2,7 +2,7 @@ const express = require("express");
 const verifyToken = require("../middleware/authMiddleware");
 
 const User = require("../models/user");
-const Driver = require("../models/driver");
+const Driver = require("../models/Driver");
 
 const router = express.Router();
 

@@ -1,5 +1,5 @@
 const Withdrawal = require("../models/Withdrawal");
-const Driver = require("../models/driver");
+const Driver = require("../models/Driver");
 const User = require("../models/user");
 
 exports.requestWithdrawal = async (req, res) => {

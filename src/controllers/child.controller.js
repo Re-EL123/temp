@@ -76,7 +76,7 @@ exports.addChild = async (req, res) => {
 exports.getChildren = async (req, res) => {
     try {
         if (req.user.role === 'driver') {
-            const Driver = require("../models/driver");
+            const Driver = require("../models/Driver");
             const driver = await Driver.findOne({ userId: req.user.id });
             if (!driver) return res.status(404).json({ message: "Driver not found" });
 
