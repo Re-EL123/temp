@@ -1,386 +1,1165 @@
-const Trip = require("../models/trip.model");
-const Child = require("../models/Child");
-const Driver = require("../models/Driver");
+// src/controllers/trip.controller.js
+// ═══════════════════════════════════════════════════════════════
+// UNIFIED TRIP CONTROLLER
+// Merges the original working system with all new features.
+//
+// Design:
+//   • parentId / driverId store User._id  (not Driver model ID)
+//   • Locations use simple { latitude, longitude, address }
+//   • Status uses kebab-case  "in-progress"  (not "in_progress")
+//   • Actions use  PUT /api/trips/:id/action  (matching frontend)
+//   • Socket + optional push notifications
+//   • Optional Driver model for capacity / wallet / ratings
+// ═══════════════════════════════════════════════════════════════
+
+const Trip = require("../models/trip");
+const User = require("../models/user");
 const { getIO } = require("../socket");
-const { sendPushNotification } = require("../services/notification.service");
 const mongoose = require("mongoose");
 
-/**
- * ==========================================
- * PARENT TRIP MANAGEMENT
- * ==========================================
- */
+// ─── Optional Imports (graceful if missing) ───────────────────
+let Driver = null;
+let Child = null;
+let pushService = null;
+
+try {
+  Driver = require("../models/Driver");
+} catch (_) {}
+try {
+  Child = require("../models/Child");
+} catch (_) {}
+try {
+  pushService = require("../services/notification.service");
+} catch (_) {}
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
 
 /**
- * @desc Request or Book a new trip (Marketplace)
- * Creates a trip request that is visible to all verified drivers in the system.
- * @route POST /api/trips/request
- * @param {Array} children - Array of child IDs or child objects to be picked up.
- * @param {Object} pickupLocation - GeoJSON coordinates and address.
- * @param {Object} dropoffLocation - GeoJSON coordinates and address.
+ * Calculate fare from distance (meters) and duration (seconds)
+ */
+const calculateFare = (distanceMeters, durationSeconds) => {
+  const distanceKm = distanceMeters / 1000;
+  const baseFare = 25;
+  const perKm = 12;
+  const timeFactor = Math.ceil(durationSeconds / 60) * 0.5;
+  return Math.round(baseFare + distanceKm * perKm + timeFactor);
+};
+
+/**
+ * Send real-time notification via Socket.IO
+ */
+const sendSocketNotification = (userId, event, data) => {
+  try {
+    const io = getIO();
+    if (io) {
+      io.to(userId.toString()).emit(event, data);
+      console.log(`[Socket] Sent → ${userId}: ${event}`);
+    }
+  } catch (err) {
+    console.error("[Socket] Failed:", err.message);
+  }
+};
+
+/**
+ * Send push notification (optional service)
+ */
+const sendPush = async (userId, payload) => {
+  try {
+    if (pushService && pushService.sendPushNotification) {
+      await pushService.sendPushNotification(userId, payload);
+    }
+  } catch (err) {
+    console.error("[Push] Failed:", err.message);
+  }
+};
+
+/**
+ * Look up the Driver document for a User ID (for capacity / wallet)
+ */
+const findDriverDoc = async (userId) => {
+  if (!Driver) return null;
+  try {
+    return await Driver.findOne({ userId });
+  } catch (_) {
+    return null;
+  }
+};
+
+/**
+ * Update Driver capacity (increment or decrement assigned students)
+ */
+const updateDriverCapacity = async (userId, delta) => {
+  if (!Driver) return;
+  try {
+    const doc = await Driver.findOne({ userId });
+    if (doc && doc.vehicleSeats) {
+      await Driver.findByIdAndUpdate(doc._id, {
+        $inc: { assignedStudents: delta },
+      });
+    }
+  } catch (_) {}
+};
+
+/**
+ * Count how many children are on a trip
+ */
+const childCount = (trip) =>
+  trip.children && trip.children.length > 0 ? trip.children.length : 1;
+
+// ═══════════════════════════════════════════════════════════════
+//  1.  TRIP CREATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/trips/create
+ * Create a new DIRECT trip (driver is known)
+ */
+exports.createTrip = async (req, res) => {
+  try {
+    const {
+      tripType,
+      parentId,
+      parentName,
+      driverId,
+      driverName,
+      driverVehicle,
+      date,
+      pickupTime,
+      pickupLocation,
+      dropoffLocation,
+      route,
+      activity,
+      instructions,
+      children,
+      fare,
+      fareBreakdown,
+      estimatedDuration,
+      estimatedDistance,
+    } = req.body;
+
+    // ── Validation ────────────────────────────────────────
+    if (
+      !parentId ||
+      !driverId ||
+      !pickupLocation ||
+      !dropoffLocation ||
+      !date ||
+      !pickupTime
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Missing required fields: parentId, driverId, pickupLocation, dropoffLocation, date, pickupTime",
+      });
+    }
+
+    // Verify parent
+    const parent = await User.findById(parentId);
+    if (!parent) {
+      return res.status(404).json({ success: false, message: "Parent not found" });
+    }
+
+    // Verify driver
+    const driver = await User.findById(driverId);
+    if (!driver || driver.role !== "driver") {
+      return res.status(404).json({ success: false, message: "Driver not found" });
+    }
+    if (!driver.isActive || !driver.onboardingCompleted) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Driver is not available" });
+    }
+
+    // ── Optional: check Driver capacity ──────────────────
+    const driverDoc = await findDriverDoc(driverId);
+    const studentCount =
+      children && children.length > 0 ? children.length : 1;
+    if (driverDoc && driverDoc.vehicleSeats) {
+      const available =
+        driverDoc.vehicleSeats - (driverDoc.assignedStudents || 0);
+      if (studentCount > available) {
+        return res.status(400).json({
+          success: false,
+          message: `Driver capacity exceeded. Available seats: ${available}`,
+        });
+      }
+    }
+
+    // ── Calculate fare ───────────────────────────────────
+    const calculatedFare =
+      fare ||
+      (fareBreakdown && fareBreakdown.total) ||
+      (route && route.distance && route.duration
+        ? calculateFare(route.distance, route.duration)
+        : 0);
+
+    // ── Create trip ──────────────────────────────────────
+    const newTrip = new Trip({
+      tripType: tripType || "once-off",
+      parentId,
+      parentName: parentName || `${parent.name} ${parent.surname}`,
+      driverId,
+      driverName:
+        driverName || `${driver.name} ${driver.surname}`,
+      driverVehicle:
+        driverVehicle ||
+        `${driver.carBrand || ""} ${driver.carModel || ""} - ${
+          driver.registrationNumber || ""
+        }`.trim(),
+      date: new Date(date),
+      pickupTime,
+      pickupLocation: {
+        latitude: pickupLocation.latitude || 0,
+        longitude: pickupLocation.longitude || 0,
+        address: pickupLocation.address || "",
+      },
+      dropoffLocation: {
+        latitude: dropoffLocation.latitude || 0,
+        longitude: dropoffLocation.longitude || 0,
+        address: dropoffLocation.address || "",
+      },
+      route: route || {},
+      activity: activity || "",
+      instructions: instructions || "",
+      children: children || [],
+      status: "pending",
+      fare: calculatedFare,
+      fareBreakdown: fareBreakdown || {},
+      estimatedDuration:
+        estimatedDuration || Math.ceil((route?.duration || 0) / 60),
+      estimatedDistance:
+        estimatedDistance || ((route?.distance || 0) / 1000).toFixed(2),
+    });
+
+    await newTrip.save();
+
+    // ── Update Driver capacity ───────────────────────────
+    await updateDriverCapacity(driverId, studentCount);
+
+    console.log(
+      `[Create Trip] ${newTrip._id}: ${parent.name} → ${driver.name}`
+    );
+
+    // ── Notify driver ────────────────────────────────────
+    sendSocketNotification(driverId, "new_trip_request", {
+      tripId: newTrip._id,
+      parentName: newTrip.parentName,
+      pickupLocation: newTrip.pickupLocation,
+      dropoffLocation: newTrip.dropoffLocation,
+      fare: newTrip.fare,
+      date: newTrip.date,
+      pickupTime: newTrip.pickupTime,
+    });
+
+    await sendPush(driverId, {
+      title: "New Trip Request 🚗",
+      body: `New trip from ${newTrip.parentName} at ${pickupTime}`,
+      data: { tripId: newTrip._id.toString(), type: "NEW_TRIP" },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Trip request sent successfully",
+      trip: newTrip,
+    });
+  } catch (error) {
+    console.error("[Create Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * POST /api/trips/request
+ * Marketplace request — driver may or may not be specified.
+ * If driverId is present → behaves like createTrip (direct booking).
+ * If driverId is absent  → creates a pending_assignment listing.
  */
 exports.requestTrip = async (req, res) => {
   try {
     const {
+      driverId,
+      parentId,
+      parentName,
       childIds,
       children,
       tripType,
       pickupLocation,
       dropoffLocation,
       pickupTime,
+      date,
       scheduledDate,
       selectedDays,
-      instructions
-    } = req.body;
-
-    // Supports both raw IDs and object lists from various frontend formats
-    const finalChildIds = childIds || (children && children.map(c => c.childId || c._id || c)) || [];
-
-    if (!finalChildIds || !Array.isArray(finalChildIds) || finalChildIds.length === 0) {
-      return res.status(400).json({ message: "At least one child must be selected" });
-    }
-
-    if (!tripType || !pickupLocation || !dropoffLocation || !pickupTime || !scheduledDate) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
-
-    const trip = await Trip.create({
-      parent: req.user.id,
-      children: finalChildIds,
-      tripType,
-      pickupLocation: {
-        coordinates: pickupLocation.coordinates || [0, 0],
-        address: pickupLocation.address
-      },
-      dropoffLocation: {
-        coordinates: dropoffLocation.coordinates || [0, 0],
-        address: dropoffLocation.address
-      },
-      scheduledDate,
-      pickupTime,
-      instructions: instructions,
-      recurringSchedule: {
-        days: selectedDays || [],
-        startDate: scheduledDate
-      },
-      status: "pending_assignment"
-    });
-
-    const populatedTrip = await Trip.findById(trip._id).populate('children');
-
-    // Broadcast the new request to all connected drivers via Socket.IO
-    getIO().emit("trip:new", populatedTrip);
-
-    res.status(201).json({ success: true, message: "Trip request submitted successfully", trip: populatedTrip });
-  } catch (err) {
-    console.error("[TRIP_CONTROLLER] Request Trip Error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
-
-/**
- * @desc Create a Direct Once-Off Trip
- * Assigns a specific driver to a trip immediately.
- * Handles BOTH legacy format and new CreateOnceOffScreen format.
- * @route POST /api/trips/create
- */
-exports.createTrip = async (req, res) => {
-  try {
-    const {
-      driverId,
-      driverName,
-      driverVehicle,
-      parentId,
-      parentName,
-      date,
-      pickupTime,
-      pickupLocation,
-      dropoffLocation,
-      activity,
       instructions,
-      children,
       fare,
-      fareBreakdown,
       route,
       estimatedDuration,
       estimatedDistance,
-      tripType,
     } = req.body;
 
-    // ─── Resolve driver ID ──────────────────────────────────
-    const resolvedDriverId = driverId;
-    if (!resolvedDriverId) {
-      return res.status(400).json({ success: false, message: "Missing required field: driverId" });
+    // If a driver is specified, use the direct createTrip flow
+    if (driverId) {
+      return exports.createTrip(req, res);
     }
 
-    // ─── Resolve children ───────────────────────────────────
-    // Frontend may send children as objects with childId, or as plain IDs
-    let childIds = [];
-    let childrenDetails = [];
-
-    if (children && Array.isArray(children) && children.length > 0) {
-      children.forEach(c => {
-        // Extract the ObjectId if it's a valid one
-        const cId = c.childId || c._id || c;
-        if (mongoose.Types.ObjectId.isValid(cId)) {
-          childIds.push(cId);
-        }
-        // Store embedded details for display purposes
-        if (typeof c === 'object') {
-          childrenDetails.push({
-            childId: mongoose.Types.ObjectId.isValid(c.childId || c._id) ? (c.childId || c._id) : undefined,
-            childName: c.childName || c.name || "",
-            school: c.school || c.schoolName || "",
-            homeAddress: c.homeAddress || "",
-            schoolAddress: c.schoolAddress || "",
-            parentContact: c.parentContact || "",
-          });
-        }
-      });
+    // ── Marketplace request (no driver yet) ──────────────
+    const resolvedParentId = parentId || (req.user && req.user.id);
+    if (!resolvedParentId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "parentId is required" });
     }
 
-    if (childIds.length === 0 && childrenDetails.length === 0) {
-      return res.status(400).json({ success: false, message: "At least one child must be included" });
+    const resolvedDate = date || scheduledDate;
+    if (!pickupLocation || !dropoffLocation || !pickupTime || !resolvedDate) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required fields" });
     }
 
-    const studentCount = childIds.length || childrenDetails.length || 1;
+    // Resolve children list
+    const resolvedChildren =
+      children ||
+      (childIds &&
+        childIds.map((id) => ({
+          childId: mongoose.Types.ObjectId.isValid(id) ? id : undefined,
+          childName: "",
+        }))) ||
+      [];
 
-    // ─── Resolve pickup/dropoff coordinates ─────────────────
-    // Frontend sends { latitude, longitude, address }
-    // Model expects GeoJSON { coordinates: [lng, lat], address }
-    const pickupCoords = pickupLocation?.coordinates
-      ? pickupLocation.coordinates
-      : [
-          pickupLocation?.longitude || 0,
-          pickupLocation?.latitude || 0
-        ];
-
-    const dropoffCoords = dropoffLocation?.coordinates
-      ? dropoffLocation.coordinates
-      : [
-          dropoffLocation?.longitude || 0,
-          dropoffLocation?.latitude || 0
-        ];
-
-    // ─── Check Driver exists ────────────────────────────────
-    const driver = await Driver.findById(resolvedDriverId);
-    if (!driver) {
-      return res.status(404).json({ success: false, message: "Driver not found" });
+    // Resolve parent name
+    let resolvedParentName = parentName || "";
+    if (!resolvedParentName) {
+      const parent = await User.findById(resolvedParentId).select("name surname");
+      if (parent) resolvedParentName = `${parent.name} ${parent.surname}`;
     }
 
-    // Check Driver Capacity (only if vehicleSeats is defined)
-    if (driver.vehicleSeats && (driver.assignedStudents || 0) + studentCount > driver.vehicleSeats) {
-      return res.status(400).json({
-        success: false,
-        message: `Driver capacity exceeded. Available seats: ${driver.vehicleSeats - (driver.assignedStudents || 0)}`
-      });
-    }
-
-    // ─── Create the trip ────────────────────────────────────
-    const trip = await Trip.create({
-      parent: parentId || req.user.id,
-      parentName: parentName || "",
-      children: childIds.length > 0 ? childIds : undefined,
-      childrenDetails: childrenDetails.length > 0 ? childrenDetails : undefined,
-      driver: resolvedDriverId,
-      driverName: driverName || "",
-      driverVehicle: driverVehicle || "",
+    const newTrip = new Trip({
       tripType: tripType || "once-off",
-      status: "pending",
+      parentId: resolvedParentId,
+      parentName: resolvedParentName,
+      driverId: null,
+      date: new Date(resolvedDate),
+      pickupTime,
       pickupLocation: {
-        type: 'Point',
-        coordinates: pickupCoords,
-        address: pickupLocation?.address || "",
+        latitude: pickupLocation.latitude || 0,
+        longitude: pickupLocation.longitude || 0,
+        address: pickupLocation.address || "",
       },
       dropoffLocation: {
-        type: 'Point',
-        coordinates: dropoffCoords,
-        address: dropoffLocation?.address || "",
+        latitude: dropoffLocation.latitude || 0,
+        longitude: dropoffLocation.longitude || 0,
+        address: dropoffLocation.address || "",
       },
-      scheduledDate: date ? new Date(date) : new Date(),
-      pickupTime: pickupTime || "",
-      activity: activity || "",
+      children: resolvedChildren,
       instructions: instructions || "",
-      fare: fareBreakdown?.total || fare || 0,
-      fareBreakdown: fareBreakdown || {},
+      fare: fare || 0,
       route: route || {},
       estimatedDuration: estimatedDuration || 0,
       estimatedDistance: estimatedDistance || "0",
+      recurringSchedule: {
+        days: selectedDays || [],
+        startDate: resolvedDate,
+      },
+      status: "pending_assignment",
     });
 
-    // ─── Populate for response ──────────────────────────────
-    const populatedTrip = await Trip.findById(trip._id)
-      .populate('children')
-      .populate({
-        path: 'driver',
-        populate: { path: 'userId', select: 'name surname phone' }
-      });
+    await newTrip.save();
 
-    // ─── Update driver capacity ─────────────────────────────
-    if (driver.vehicleSeats) {
-      await Driver.findByIdAndUpdate(resolvedDriverId, {
-        $inc: { assignedStudents: studentCount }
-      });
-    }
+    console.log(
+      `[Request Trip] Marketplace listing ${newTrip._id} by ${resolvedParentName}`
+    );
 
-    // ─── Notify driver ──────────────────────────────────────
+    // Broadcast to ALL connected drivers
     try {
-      getIO().emit("trip:new", populatedTrip);
+      getIO().emit("trip:new", newTrip);
+    } catch (_) {}
 
-      if (driver && driver.userId) {
-        await sendPushNotification(driver.userId, {
-          title: "New Trip Request 🚗",
-          body: `You have a new trip request for ${pickupTime} at ${pickupLocation?.address || "pickup location"}`,
-          data: { tripId: trip._id, type: 'NEW_TRIP' }
-        });
-      }
-    } catch (notifError) {
-      console.error("[TRIP_CONTROLLER] Notification error (non-fatal):", notifError.message);
-    }
-
-    console.log(`[TRIP_CONTROLLER] Trip created: ${trip._id} | Parent: ${parentName || req.user.id} → Driver: ${driverName || resolvedDriverId}`);
-
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: "Trip created successfully",
-      trip: populatedTrip,
-      tripId: trip._id,
+      message: "Trip request submitted to marketplace",
+      trip: newTrip,
     });
-  } catch (err) {
-    console.error("[TRIP_CONTROLLER] Create Trip Error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  } catch (error) {
+    console.error("[Request Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
-/**
- * @desc Get User's Ride History (Parents)
- * Retrieves all trips associated with the authenticated parent user.
- * @route GET /api/trips/history
- */
-exports.getParentRideHistory = async (req, res) => {
-  try {
-    const parentId = req.user.id;
-    const history = await Trip.find({ parent: parentId })
-      .populate('children', 'name surname schoolName schoolAddress age gender grade')
-      .populate({
-        path: 'driver',
-        populate: {
-          path: 'userId',
-          select: 'name surname phone profilePhoto'
-        }
-      })
-      .sort({ createdAt: -1 });
-
-    res.json({ success: true, history });
-  } catch (err) {
-    console.error("[TRIP_CONTROLLER] History Error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
+// ═══════════════════════════════════════════════════════════════
+//  2.  DRIVER QUERIES
+// ═══════════════════════════════════════════════════════════════
 
 /**
- * @desc Unified endpoint to get trips for the authenticated user (Parent or Driver)
- * Used by mobile and web frontends to populate trip history and current trips.
- * @route GET /api/trips/user-trips
+ * GET /api/trips/requests/:driverId
+ * Pending trip requests for a driver + open marketplace listings
  */
-exports.getUserTrips = async (req, res) => {
+exports.getDriverRequests = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const role = req.user.role;
+    const { driverId } = req.params;
 
-    let query = {};
-    if (role === 'driver') {
-      // Find trips assigned to this driver
-      query = { driver: userId };
-    } else {
-      // Default to finding trips requested by this parent
-      query = { parent: userId };
+    const driver = await User.findById(driverId);
+    if (!driver || driver.role !== "driver") {
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found" });
     }
 
-    const trips = await Trip.find(query)
-      .populate('children', 'name surname schoolName schoolAddress age gender grade photoUrl')
-      .populate({
-        path: 'driver',
-        populate: {
-          path: 'userId',
-          select: 'name surname phone profilePhoto'
-        }
-      })
-      .populate({
-        path: 'parent',
-        select: 'name surname phone profilePhoto'
-      })
-      .sort({ createdAt: -1 });
+    const requests = await Trip.find({
+      $or: [
+        { driverId, status: "pending" },
+        { status: "pending_assignment" },
+      ],
+    }).sort({ createdAt: -1 });
 
-    res.json({ success: true, count: trips.length, trips });
-  } catch (err) {
-    console.error("[TRIP_CONTROLLER] User Trips Error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
+    console.log(
+      `[Driver Requests] ${requests.length} requests for ${driverId}`
+    );
+
+    return res.json({
+      success: true,
+      requests,
+      count: requests.length,
+    });
+  } catch (error) {
+    console.error("[Get Driver Requests] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
-
 /**
- * ==========================================
- * TRIP STATUS & LIVE TRACKING (NEW)
- * ==========================================
+ * GET /api/trips/upcoming/:driverId
+ * Accepted + in-progress trips for a driver
  */
+exports.getDriverUpcomingTrips = async (req, res) => {
+  try {
+    const { driverId } = req.params;
+
+    const driver = await User.findById(driverId);
+    if (!driver || driver.role !== "driver") {
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found" });
+    }
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    const trips = await Trip.find({
+      driverId,
+      status: { $in: ["accepted", "in-progress"] },
+      date: { $gte: now },
+    }).sort({ date: 1, pickupTime: 1 });
+
+    console.log(`[Upcoming Trips] ${trips.length} for driver ${driverId}`);
+
+    return res.json({
+      success: true,
+      trips,
+      count: trips.length,
+    });
+  } catch (error) {
+    console.error("[Get Upcoming Trips] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
 
 /**
- * @desc Get trip status for live tracking polling
- * Called by CreateOnceOffScreen every 8 seconds during tracking step.
- * @route GET /api/trips/:id/status
+ * GET /api/trips/driver-trips/:driverId
+ * ALL trips for a specific driver (any status)
+ */
+exports.getDriverTrips = async (req, res) => {
+  try {
+    const { driverId } = req.params;
+
+    const trips = await Trip.find({ driverId })
+      .populate("parentId", "name surname phone profilePhoto")
+      .sort({ createdAt: -1 });
+
+    return res.json({
+      success: true,
+      trips,
+      count: trips.length,
+    });
+  } catch (error) {
+    console.error("[Get Driver Trips] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  3.  TRIP STATUS ACTIONS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * PUT /api/trips/:id/accept
+ * Driver accepts a trip request (direct or marketplace)
+ */
+exports.acceptTrip = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    // Must be pending or pending_assignment
+    if (trip.status !== "pending" && trip.status !== "pending_assignment") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot accept trip with status: ${trip.status}`,
+      });
+    }
+
+    // ── Marketplace claim: assign driver ─────────────────
+    if (trip.status === "pending_assignment" || !trip.driverId) {
+      // Resolve who is accepting
+      const acceptingUserId =
+        (req.body && req.body.driverId) ||
+        (req.user && req.user.id) ||
+        null;
+
+      if (!acceptingUserId) {
+        return res
+          .status(400)
+          .json({ success: false, message: "driverId is required to claim a marketplace trip" });
+      }
+
+      const driver = await User.findById(acceptingUserId);
+      if (!driver || driver.role !== "driver") {
+        return res
+          .status(403)
+          .json({ success: false, message: "Only drivers can accept trips" });
+      }
+
+      // Check capacity
+      const driverDoc = await findDriverDoc(acceptingUserId);
+      const students = childCount(trip);
+      if (driverDoc && driverDoc.vehicleSeats) {
+        const available =
+          driverDoc.vehicleSeats - (driverDoc.assignedStudents || 0);
+        if (students > available) {
+          return res.status(400).json({
+            success: false,
+            message: `Vehicle capacity exceeded. Available: ${available}`,
+          });
+        }
+      }
+
+      trip.driverId = acceptingUserId;
+      trip.driverName = `${driver.name} ${driver.surname}`;
+      trip.driverVehicle =
+        `${driver.carBrand || ""} ${driver.carModel || ""} - ${
+          driver.registrationNumber || ""
+        }`.trim();
+
+      await updateDriverCapacity(acceptingUserId, students);
+    }
+
+    trip.status = "accepted";
+    trip.acceptedAt = new Date();
+    trip.updatedAt = new Date();
+    await trip.save();
+
+    console.log(`[Accept Trip] ${id} accepted by ${trip.driverId}`);
+
+    // Notify parent
+    sendSocketNotification(trip.parentId, "trip_accepted", {
+      tripId: trip._id,
+      driverName: trip.driverName,
+      driverVehicle: trip.driverVehicle,
+      pickupTime: trip.pickupTime,
+      date: trip.date,
+    });
+
+    await sendPush(trip.parentId, {
+      title: "Trip Accepted ✅",
+      body: `${trip.driverName} accepted your trip request!`,
+      data: { tripId: trip._id.toString(), type: "TRIP_ACCEPTED" },
+    });
+
+    return res.json({
+      success: true,
+      message: "Trip accepted successfully",
+      trip,
+    });
+  } catch (error) {
+    console.error("[Accept Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * PUT /api/trips/:id/decline
+ * Driver declines a trip request
+ */
+exports.declineTrip = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    if (trip.status !== "pending" && trip.status !== "pending_assignment") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot decline trip with status: ${trip.status}`,
+      });
+    }
+
+    // Release capacity if driver was assigned
+    if (trip.driverId) {
+      await updateDriverCapacity(trip.driverId, -childCount(trip));
+    }
+
+    trip.status = "declined";
+    trip.declinedAt = new Date();
+    trip.declineReason = reason || "Driver declined";
+    trip.updatedAt = new Date();
+    await trip.save();
+
+    console.log(`[Decline Trip] ${id} declined by ${trip.driverId}`);
+
+    sendSocketNotification(trip.parentId, "trip_declined", {
+      tripId: trip._id,
+      driverName: trip.driverName,
+      reason: trip.declineReason,
+    });
+
+    await sendPush(trip.parentId, {
+      title: "Trip Declined ❌",
+      body: "Your driver was unable to accept. We're looking for another.",
+      data: { tripId: trip._id.toString(), type: "TRIP_DECLINED" },
+    });
+
+    return res.json({
+      success: true,
+      message: "Trip declined successfully",
+      trip,
+    });
+  } catch (error) {
+    console.error("[Decline Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * PUT /api/trips/:id/start
+ * Driver starts an accepted trip
+ */
+exports.startTrip = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { latitude, longitude } = req.body;
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    if (trip.status !== "accepted") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot start trip with status: ${trip.status}`,
+      });
+    }
+
+    trip.status = "in-progress";
+    trip.startedAt = new Date();
+    trip.updatedAt = new Date();
+
+    if (latitude && longitude) {
+      trip.currentLocation = {
+        latitude,
+        longitude,
+        timestamp: new Date(),
+      };
+    }
+
+    await trip.save();
+
+    console.log(`[Start Trip] ${id} started by ${trip.driverId}`);
+
+    sendSocketNotification(trip.parentId, "trip_started", {
+      tripId: trip._id,
+      driverName: trip.driverName,
+      startedAt: trip.startedAt,
+      currentLocation: trip.currentLocation,
+    });
+
+    await sendPush(trip.parentId, {
+      title: "Trip Started 🚀",
+      body: "Your child's trip has started. Track it live!",
+      data: { tripId: trip._id.toString(), type: "TRIP_STARTED" },
+    });
+
+    return res.json({
+      success: true,
+      message: "Trip started successfully",
+      trip,
+    });
+  } catch (error) {
+    console.error("[Start Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * PUT /api/trips/:id/complete
+ * Driver completes a trip
+ */
+exports.completeTrip = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { actualFare, notes } = req.body;
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    if (trip.status !== "in-progress") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot complete trip with status: ${trip.status}`,
+      });
+    }
+
+    trip.status = "completed";
+    trip.completedAt = new Date();
+    trip.updatedAt = new Date();
+    if (actualFare) trip.actualFare = actualFare;
+    if (notes) trip.completionNotes = notes;
+    await trip.save();
+
+    // ── Release capacity ─────────────────────────────────
+    if (trip.driverId) {
+      await updateDriverCapacity(trip.driverId, -childCount(trip));
+    }
+
+    // ── Update driver earnings on User model ─────────────
+    const fareAmount = actualFare || trip.fare || 0;
+    if (trip.driverId) {
+      await User.findByIdAndUpdate(trip.driverId, {
+        $inc: { totalEarnings: fareAmount },
+      });
+    }
+
+    // ── Update Driver wallet (if Driver model exists) ────
+    if (Driver && trip.driverId) {
+      try {
+        await Driver.findOneAndUpdate(
+          { userId: trip.driverId },
+          { $inc: { walletBalance: fareAmount } }
+        );
+      } catch (_) {}
+    }
+
+    console.log(`[Complete Trip] ${id} completed by ${trip.driverId}`);
+
+    sendSocketNotification(trip.parentId, "trip_completed", {
+      tripId: trip._id,
+      driverName: trip.driverName,
+      completedAt: trip.completedAt,
+      fare: fareAmount,
+    });
+
+    await sendPush(trip.parentId, {
+      title: "Trip Completed 🏁",
+      body: "Your child has arrived safely!",
+      data: { tripId: trip._id.toString(), type: "TRIP_COMPLETED" },
+    });
+
+    return res.json({
+      success: true,
+      message: "Trip completed successfully",
+      trip,
+    });
+  } catch (error) {
+    console.error("[Complete Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * PUT /api/trips/:id/cancel
+ * Cancel a trip (parent or driver)
+ */
+exports.cancelTrip = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, cancelledBy } = req.body;
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    if (trip.status === "completed") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Cannot cancel completed trip" });
+    }
+
+    // Release capacity if driver was assigned and trip was active
+    if (
+      trip.driverId &&
+      ["pending", "accepted", "in-progress"].includes(trip.status)
+    ) {
+      await updateDriverCapacity(trip.driverId, -childCount(trip));
+    }
+
+    trip.status = "cancelled";
+    trip.cancelledAt = new Date();
+    trip.cancelledBy = cancelledBy || "user";
+    trip.cancellationReason = reason || "User cancelled";
+    trip.updatedAt = new Date();
+    await trip.save();
+
+    console.log(`[Cancel Trip] ${id} cancelled by ${cancelledBy}`);
+
+    // Notify both parties
+    sendSocketNotification(trip.parentId, "trip_cancelled", {
+      tripId: trip._id,
+      reason: trip.cancellationReason,
+      cancelledBy: trip.cancelledBy,
+    });
+
+    if (trip.driverId) {
+      sendSocketNotification(trip.driverId, "trip_cancelled", {
+        tripId: trip._id,
+        reason: trip.cancellationReason,
+        cancelledBy: trip.cancelledBy,
+      });
+    }
+
+    await sendPush(trip.parentId, {
+      title: "Trip Cancelled",
+      body: trip.cancellationReason,
+      data: { tripId: trip._id.toString(), type: "TRIP_CANCELLED" },
+    });
+
+    return res.json({
+      success: true,
+      message: "Trip cancelled successfully",
+      trip,
+    });
+  } catch (error) {
+    console.error("[Cancel Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  4.  LIVE TRACKING
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * PUT /api/trips/:id/location
+ * Update driver's real-time location during a trip
+ */
+exports.updateTripLocation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { latitude, longitude, speed, heading } = req.body;
+
+    if (!latitude || !longitude) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Latitude and longitude required" });
+    }
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    if (trip.status !== "in-progress") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Trip is not in progress" });
+    }
+
+    trip.currentLocation = {
+      latitude,
+      longitude,
+      speed: speed || 0,
+      heading: heading || 0,
+      timestamp: new Date(),
+    };
+    trip.driverLocation = {
+      latitude,
+      longitude,
+      updatedAt: new Date(),
+    };
+    trip.updatedAt = new Date();
+    await trip.save();
+
+    // Broadcast to parent
+    sendSocketNotification(trip.parentId, "driver_location_update", {
+      tripId: trip._id,
+      location: trip.currentLocation,
+    });
+
+    // Also broadcast to trip room
+    try {
+      getIO()
+        .to(id)
+        .emit("trip:location", {
+          latitude,
+          longitude,
+          heading,
+          speed,
+          timestamp: Date.now(),
+        });
+    } catch (_) {}
+
+    return res.json({
+      success: true,
+      message: "Location updated successfully",
+      location: trip.currentLocation,
+    });
+  } catch (error) {
+    console.error("[Update Trip Location] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * POST /api/trips/location
+ * Legacy endpoint – update location by tripId in body
+ */
+exports.updateDriverLocation = async (req, res) => {
+  try {
+    const { tripId, latitude, longitude, heading, speed } = req.body;
+
+    if (!tripId || !latitude || !longitude) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing location data" });
+    }
+
+    await Trip.findByIdAndUpdate(tripId, {
+      currentLocation: {
+        latitude,
+        longitude,
+        heading: heading || 0,
+        speed: speed || 0,
+        timestamp: new Date(),
+      },
+      driverLocation: {
+        latitude,
+        longitude,
+        updatedAt: new Date(),
+      },
+      updatedAt: new Date(),
+    });
+
+    try {
+      getIO().to(tripId).emit("trip:location", {
+        latitude,
+        longitude,
+        heading,
+        speed,
+        timestamp: Date.now(),
+      });
+    } catch (_) {}
+
+    return res.json({ success: true, message: "Location updated" });
+  } catch (error) {
+    console.error("[Legacy Location Update] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * PATCH /api/trips/:id/driver-location
+ * New-style driver location update
+ */
+exports.updateTripDriverLocation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { latitude, longitude } = req.body;
+
+    if (!latitude || !longitude) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Latitude and longitude required" });
+    }
+
+    const trip = await Trip.findByIdAndUpdate(
+      id,
+      {
+        driverLocation: { latitude, longitude, updatedAt: new Date() },
+        currentLocation: {
+          latitude,
+          longitude,
+          timestamp: new Date(),
+        },
+        updatedAt: new Date(),
+      },
+      { new: true }
+    );
+
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    try {
+      getIO().to(id).emit("trip:location", {
+        latitude,
+        longitude,
+        timestamp: Date.now(),
+      });
+    } catch (_) {}
+
+    return res.json({
+      success: true,
+      message: "Driver location updated",
+      driverLocation: trip.driverLocation,
+    });
+  } catch (error) {
+    console.error("[Driver Location] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * GET /api/trips/:id/tracking
+ * Get trip route and real-time tracking data
+ */
+exports.getTripTracking = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const trip = await Trip.findById(id)
+      .populate(
+        "driverId",
+        "name surname phone carBrand carModel registrationNumber"
+      )
+      .populate("parentId", "name surname phone");
+
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    return res.json({
+      success: true,
+      trip: {
+        _id: trip._id,
+        status: trip.status,
+        pickupLocation: trip.pickupLocation,
+        dropoffLocation: trip.dropoffLocation,
+        currentLocation: trip.currentLocation,
+        driverLocation: trip.driverLocation,
+        route: trip.route,
+        driver: trip.driverId,
+        parent: trip.parentId,
+        startedAt: trip.startedAt,
+        fare: trip.fare,
+        estimatedDuration: trip.estimatedDuration,
+      },
+    });
+  } catch (error) {
+    console.error("[Get Trip Tracking] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * GET /api/trips/:id/status
+ * Lightweight status polling (used by CreateOnceOffScreen)
  */
 exports.getTripStatus = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid trip ID format",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid trip ID" });
     }
 
     const trip = await Trip.findById(id)
       .select(
         "status driverLocation currentLocation pickupLocation dropoffLocation " +
-        "driverName driverVehicle fare estimatedDuration parentName " +
-        "acceptedAt startedAt completedAt cancelledAt declinedAt " +
-        "rating childrenDetails children createdAt"
+          "driverName driverVehicle fare estimatedDuration parentName " +
+          "acceptedAt startedAt completedAt cancelledAt declinedAt " +
+          "rating children createdAt"
       )
       .lean();
 
     if (!trip) {
-      return res.status(404).json({
-        success: false,
-        message: "Trip not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
     }
 
-    // Normalize status for frontend (in_progress → in-progress)
-    let normalizedStatus = trip.status;
-    if (normalizedStatus === 'in_progress') normalizedStatus = 'in-progress';
-    if (normalizedStatus === 'assigned') normalizedStatus = 'accepted';
-
-    // Build driver location from either driverLocation or currentLocation
-    let driverLoc = trip.driverLocation || null;
-    if (!driverLoc && trip.currentLocation && trip.currentLocation.coordinates) {
-      const coords = trip.currentLocation.coordinates;
-      if (coords[0] !== 0 || coords[1] !== 0) {
-        driverLoc = {
-          latitude: coords[1],
-          longitude: coords[0],
-        };
-      }
+    // Build driver location from whichever field is populated
+    let driverLoc = null;
+    if (trip.driverLocation && trip.driverLocation.latitude) {
+      driverLoc = trip.driverLocation;
+    } else if (trip.currentLocation && trip.currentLocation.latitude) {
+      driverLoc = {
+        latitude: trip.currentLocation.latitude,
+        longitude: trip.currentLocation.longitude,
+      };
     }
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       trip: {
         _id: trip._id,
-        status: normalizedStatus,
+        status: trip.status,
         driverLocation: driverLoc,
         pickupLocation: trip.pickupLocation,
         dropoffLocation: trip.dropoffLocation,
@@ -398,711 +1177,496 @@ exports.getTripStatus = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[TRIP_CONTROLLER] Get trip status error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to get trip status",
-      error: error.message,
-    });
+    console.error("[Get Trip Status] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  5.  TRIP QUERIES
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/trips
+ * Get all trips with optional query-string filters
+ *   ?status=pending&userId=xxx&role=driver&startDate=...&endDate=...
+ */
+exports.getTrips = async (req, res) => {
+  try {
+    const { status, userId, role, startDate, endDate } = req.query;
+    const filter = {};
+
+    if (status) filter.status = status;
+
+    if (userId && role) {
+      if (role === "parent") filter.parentId = userId;
+      else if (role === "driver") filter.driverId = userId;
+    }
+
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) filter.date.$gte = new Date(startDate);
+      if (endDate) filter.date.$lte = new Date(endDate);
+    }
+
+    const trips = await Trip.find(filter)
+      .populate(
+        "driverId",
+        "name surname phone carBrand carModel registrationNumber profilePhoto"
+      )
+      .populate("parentId", "name surname phone email profilePhoto")
+      .sort({ createdAt: -1 });
+
+    console.log(`[Get Trips] ${trips.length} trips`, filter);
+
+    return res.json({ success: true, trips, count: trips.length });
+  } catch (error) {
+    console.error("[Get Trips] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
 /**
- * @desc Rate a driver after trip completion
- * Called by CreateOnceOffScreen rating modal.
- * @route POST /api/trips/:id/rate
+ * GET /api/trips/:id
+ * Get single trip by ID
+ */
+exports.getTripById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const trip = await Trip.findById(id)
+      .populate(
+        "driverId",
+        "name surname phone carBrand carModel registrationNumber"
+      )
+      .populate("parentId", "name surname phone email");
+
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    return res.json({ success: true, trip });
+  } catch (error) {
+    console.error("[Get Trip By ID] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * GET /api/trips/parent/:parentId
+ * All trips for a specific parent
+ */
+exports.getParentTrips = async (req, res) => {
+  try {
+    const { parentId } = req.params;
+    const { status } = req.query;
+
+    const filter = { parentId };
+    if (status) filter.status = status;
+
+    const trips = await Trip.find(filter)
+      .populate(
+        "driverId",
+        "name surname phone carBrand carModel registrationNumber profilePhoto"
+      )
+      .sort({ createdAt: -1 });
+
+    console.log(
+      `[Parent Trips] ${trips.length} trips for parent ${parentId}`
+    );
+
+    return res.json({ success: true, trips, count: trips.length });
+  } catch (error) {
+    console.error("[Get Parent Trips] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * GET /api/trips/history
+ * Authenticated parent's ride history
+ */
+exports.getParentRideHistory = async (req, res) => {
+  try {
+    const parentId = req.user.id;
+
+    const history = await Trip.find({ parentId })
+      .populate(
+        "driverId",
+        "name surname phone carBrand carModel registrationNumber profilePhoto"
+      )
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Sanitize null driver refs
+    const sanitised = history.map((t) => ({
+      ...t,
+      driverName:
+        t.driverName ||
+        (t.driverId
+          ? `${t.driverId.name} ${t.driverId.surname}`
+          : "Unknown Driver"),
+    }));
+
+    return res.json({ success: true, history: sanitised });
+  } catch (error) {
+    console.error("[Ride History] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * GET /api/trips/user-trips
+ * Unified endpoint: returns trips for authenticated user (parent OR driver)
+ */
+exports.getUserTrips = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const role = req.user.role;
+
+    const filter =
+      role === "driver" ? { driverId: userId } : { parentId: userId };
+
+    const trips = await Trip.find(filter)
+      .populate(
+        "driverId",
+        "name surname phone carBrand carModel registrationNumber profilePhoto"
+      )
+      .populate("parentId", "name surname phone profilePhoto")
+      .sort({ createdAt: -1 });
+
+    return res.json({ success: true, trips, count: trips.length });
+  } catch (error) {
+    console.error("[User Trips] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/**
+ * GET /api/trips/active/:tripId
+ * Get active (in-progress) trip for live tracking
+ */
+exports.getActiveTrip = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+
+    const trip = await Trip.findById(tripId)
+      .populate(
+        "driverId",
+        "name surname phone carBrand carModel registrationNumber currentLocation"
+      )
+      .populate("parentId", "name surname phone");
+
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    if (trip.status !== "in-progress") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Trip is not currently active" });
+    }
+
+    return res.json({ success: true, trip });
+  } catch (error) {
+    console.error("[Get Active Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  6.  RATINGS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/trips/:id/rate
+ * Rate a driver after trip completion
  */
 exports.rateTrip = async (req, res) => {
   try {
     const { id } = req.params;
-    const { rating, comment, driverId } = req.body;
+    const { rating, comment } = req.body;
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid trip ID format",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid trip ID" });
     }
 
-    // Validate rating value
     if (!rating || rating < 1 || rating > 5) {
-      return res.status(400).json({
-        success: false,
-        message: "Rating must be between 1 and 5",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Rating must be between 1 and 5" });
     }
 
-    // Find the trip
     const trip = await Trip.findById(id);
-
     if (!trip) {
-      return res.status(404).json({
-        success: false,
-        message: "Trip not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
     }
 
-    // Check if trip is completed
     if (trip.status !== "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "Can only rate completed trips",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Can only rate completed trips" });
     }
 
-    // Check if already rated
     if (trip.rating && trip.rating.value) {
-      return res.status(400).json({
-        success: false,
-        message: "Trip has already been rated",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Trip has already been rated" });
     }
 
-    // Save rating on the trip
     trip.rating = {
       value: rating,
       comment: comment || "",
       ratedAt: new Date(),
     };
-
+    trip.updatedAt = new Date();
     await trip.save();
 
-    // ─── Update driver's average rating ───────────────────
-    const targetDriverId = driverId || trip.driver;
-    if (targetDriverId && mongoose.Types.ObjectId.isValid(targetDriverId)) {
+    // ── Update driver's average rating ───────────────────
+    if (trip.driverId) {
       try {
-        // Calculate new average rating from all completed & rated trips
         const ratedTrips = await Trip.find({
-          driver: targetDriverId,
+          driverId: trip.driverId,
           "rating.value": { $exists: true, $ne: null },
         }).select("rating.value");
 
         if (ratedTrips.length > 0) {
-          const totalRating = ratedTrips.reduce(
+          const total = ratedTrips.reduce(
             (sum, t) => sum + (t.rating?.value || 0),
             0
           );
-          const averageRating = parseFloat(
-            (totalRating / ratedTrips.length).toFixed(2)
-          );
+          const avg = parseFloat((total / ratedTrips.length).toFixed(2));
 
-          // Update driver's rating in the Driver model
-          await Driver.findByIdAndUpdate(targetDriverId, {
-            rating: averageRating,
+          // Update User model
+          await User.findByIdAndUpdate(trip.driverId, {
+            rating: avg,
             totalRatings: ratedTrips.length,
           });
 
+          // Update Driver model if available
+          if (Driver) {
+            try {
+              await Driver.findOneAndUpdate(
+                { userId: trip.driverId },
+                { rating: avg, totalRatings: ratedTrips.length }
+              );
+            } catch (_) {}
+          }
+
           console.log(
-            `[RATING] Driver ${targetDriverId} updated: avg=${averageRating} from ${ratedTrips.length} ratings`
+            `[Rating] Driver ${trip.driverId} → avg ${avg} (${ratedTrips.length} ratings)`
           );
         }
-      } catch (driverError) {
-        // Don't fail the rating if driver update fails
-        console.error("[RATING] Driver rating update error:", driverError);
+      } catch (driverErr) {
+        console.error("[Rating] Driver update error:", driverErr.message);
       }
     }
 
     console.log(
-      `[RATING] Trip ${id} rated: ${rating}/5${comment ? ` — "${comment}"` : ""}`
+      `[Rating] Trip ${id} rated ${rating}/5${comment ? ` — "${comment}"` : ""}`
     );
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       message: "Rating submitted successfully",
-      rating: {
-        value: rating,
-        comment: comment || "",
-        ratedAt: trip.rating.ratedAt,
-      },
+      rating: trip.rating,
     });
   } catch (error) {
-    console.error("[TRIP_CONTROLLER] Rate trip error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to submit rating",
-      error: error.message,
-    });
+    console.error("[Rate Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
-/**
- * @desc Update driver's live location during a trip
- * Used by driver app for real-time GPS updates.
- * @route PATCH /api/trips/:id/driver-location
- */
-exports.updateTripDriverLocation = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { latitude, longitude } = req.body;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid trip ID format",
-      });
-    }
-
-    if (!latitude || !longitude) {
-      return res.status(400).json({
-        success: false,
-        message: "Latitude and longitude are required",
-      });
-    }
-
-    const trip = await Trip.findByIdAndUpdate(
-      id,
-      {
-        driverLocation: {
-          latitude,
-          longitude,
-          updatedAt: new Date(),
-        },
-        currentLocation: {
-          type: 'Point',
-          coordinates: [longitude, latitude],
-        },
-      },
-      { new: true }
-    );
-
-    if (!trip) {
-      return res.status(404).json({
-        success: false,
-        message: "Trip not found",
-      });
-    }
-
-    // Also broadcast via socket
-    try {
-      getIO().to(id).emit("trip:location", {
-        latitude,
-        longitude,
-        timestamp: Date.now(),
-      });
-    } catch (socketErr) {
-      // Non-fatal
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "Driver location updated",
-      driverLocation: trip.driverLocation,
-    });
-  } catch (error) {
-    console.error("[TRIP_CONTROLLER] Update driver location error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to update driver location",
-      error: error.message,
-    });
-  }
-};
-
+// ═══════════════════════════════════════════════════════════════
+//  7.  ADMIN
+// ═══════════════════════════════════════════════════════════════
 
 /**
- * ==========================================
- * DRIVER TRIP ACTIONS
- * ==========================================
- */
-
-/**
- * @desc Get Driver's Pending Requests
- * Fetches trips assigned to the driver OR open Marketplace trips waiting for a driver.
- * @route GET /api/trips/requests/:driverId
- */
-exports.getDriverRequests = async (req, res) => {
-  try {
-    const { driverId } = req.params;
-
-    const requests = await Trip.find({
-      $or: [
-        { driver: driverId, status: "pending" },
-        { status: "pending_assignment" }
-      ]
-    }).populate("children", "name surname schoolName schoolAddress age gender grade photoUrl")
-      .populate("parent", "name surname phone profilePhoto")
-      .sort({ createdAt: -1 });
-
-    // Format for frontend mapping expectation
-    const formattedRequests = requests.map(trip => ({
-      _id: trip._id,
-      parentName: trip.parentName || `${trip.parent?.name || ''} ${trip.parent?.surname || ''}`.trim(),
-      pickupLocation: {
-        address: trip.pickupLocation.address,
-        latitude: trip.pickupLocation.coordinates[1],
-        longitude: trip.pickupLocation.coordinates[0]
-      },
-      dropoffLocation: {
-        address: trip.dropoffLocation.address,
-        latitude: trip.dropoffLocation.coordinates[1],
-        longitude: trip.dropoffLocation.coordinates[0]
-      },
-      pickupTime: trip.pickupTime,
-      date: trip.scheduledDate,
-      fare: trip.fare || 0,
-      estimatedDistance: trip.estimatedDistance || "0",
-      estimatedDuration: trip.estimatedDuration || 0,
-      children: (trip.childrenDetails && trip.childrenDetails.length > 0)
-        ? trip.childrenDetails.map(c => ({ childName: c.childName }))
-        : (trip.children || []).map(c => ({ childName: c.name })),
-      status: trip.status,
-      createdAt: trip.createdAt
-    }));
-
-    res.json({ success: true, requests: formattedRequests });
-  } catch (err) {
-    console.error("[TRIP_CONTROLLER] getDriverRequests Error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
-
-/**
- * @desc Get Driver's Upcoming & Active Trips
- * @route GET /api/trips/upcoming/:driverId
- */
-exports.getUpcomingTrips = async (req, res) => {
-  try {
-    const { driverId } = req.params;
-
-    const trips = await Trip.find({
-      driver: driverId,
-      status: { $in: ["assigned", "accepted", "in_progress", "in-progress"] }
-    }).populate("children", "name surname schoolName schoolAddress age gender grade photoUrl")
-      .populate("parent", "name surname phone profilePhoto")
-      .sort({ scheduledDate: 1, pickupTime: 1 });
-
-    const formattedTrips = trips.map(trip => ({
-      _id: trip._id,
-      parentName: trip.parentName || `${trip.parent?.name || ''} ${trip.parent?.surname || ''}`.trim(),
-      pickupLocation: { address: trip.pickupLocation.address },
-      dropoffLocation: { address: trip.dropoffLocation.address },
-      pickupTime: trip.pickupTime,
-      date: trip.scheduledDate,
-      fare: trip.fare || 0,
-      status: trip.status,
-      children: (trip.childrenDetails && trip.childrenDetails.length > 0)
-        ? trip.childrenDetails.map(c => ({ childName: c.childName }))
-        : (trip.children || []).map(c => ({ childName: c.name })),
-      startedAt: trip.startedAt,
-      completedAt: trip.completedAt
-    }));
-
-    res.json({ success: true, trips: formattedTrips });
-  } catch (err) {
-    console.error("[TRIP_CONTROLLER] getUpcomingTrips Error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
-
-/**
- * @desc Accept a Trip Request
- * Claims a marketplace trip or accepts a direct booking.
- * @route PATCH /api/trips/accept/:id
- */
-exports.acceptTrip = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const trip = await Trip.findById(id);
-    if (!trip) return res.status(404).json({ success: false, message: "Trip not found" });
-
-    // Handle Marketplace claiming logic
-    if (trip.status === "pending_assignment" || !trip.driver) {
-      const driver = await Driver.findOne({ userId: req.user.id });
-      if (!driver) {
-        return res.status(403).json({ success: false, message: "Only verified drivers can accept trips" });
-      }
-
-      // Check Capacity
-      const studentCount = trip.children ? trip.children.length : (trip.childrenDetails ? trip.childrenDetails.length : 1);
-      if (driver.vehicleSeats && (driver.assignedStudents || 0) + studentCount > driver.vehicleSeats) {
-        return res.status(400).json({
-          success: false,
-          message: "You have exceeded your vehicle capacity. Please complete other trips first."
-        });
-      }
-
-      trip.driver = driver._id;
-
-      // Increment capacity
-      if (driver.vehicleSeats) {
-        await Driver.findByIdAndUpdate(driver._id, {
-          $inc: { assignedStudents: studentCount }
-        });
-      }
-    }
-
-    trip.status = "assigned";
-    trip.acceptedAt = new Date();
-    await trip.save();
-
-    // Notify Parent via Push and Socket
-    try {
-      await sendPushNotification(trip.parent, {
-        title: "Trip Accepted ✅",
-        body: "A driver has accepted your trip request!",
-        data: { tripId: trip._id, type: 'TRIP_ACCEPTED' }
-      });
-      getIO().to(trip.parent.toString()).emit("trip_accepted", { tripId: id });
-    } catch (notifErr) {
-      console.error("[TRIP_CONTROLLER] Accept notification error:", notifErr.message);
-    }
-
-    res.json({ success: true, message: "Trip accepted successfully", trip });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
-
-/**
- * @desc Decline/Reject a Trip Request
- * Releases the trip back to the Marketplace for other drivers.
- * @route PATCH /api/trips/decline/:id
- */
-exports.declineTrip = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const trip = await Trip.findById(id);
-    if (!trip) return res.status(404).json({ success: false, message: "Trip not found" });
-
-    // Release Capacity if driver was assigned
-    if (trip.driver && (trip.status === "assigned" || trip.status === "pending")) {
-      const studentCount = trip.children ? trip.children.length : (trip.childrenDetails ? trip.childrenDetails.length : 1);
-      const driver = await Driver.findById(trip.driver);
-      if (driver && driver.vehicleSeats) {
-        await Driver.findByIdAndUpdate(trip.driver, {
-          $inc: { assignedStudents: -studentCount }
-        });
-      }
-    }
-
-    trip.status = "declined";
-    trip.declinedAt = new Date();
-    trip.driver = null;
-    await trip.save();
-
-    try {
-      await sendPushNotification(trip.parent, {
-        title: "Trip Declined ❌",
-        body: "The driver was unable to accept your trip. We are looking for another one.",
-        data: { tripId: trip._id, type: 'TRIP_DECLINED' }
-      });
-      getIO().to(trip.parent.toString()).emit("trip_declined", { tripId: id });
-    } catch (notifErr) {
-      console.error("[TRIP_CONTROLLER] Decline notification error:", notifErr.message);
-    }
-
-    res.json({ success: true, message: "Trip declined successfully" });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
-
-/**
- * @desc Start the Trip Execution
- * Notifies the parent and enables live tracking.
- * @route PATCH /api/trips/start/:id
- */
-exports.startTrip = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const trip = await Trip.findByIdAndUpdate(
-      id,
-      { status: "in_progress", startedAt: new Date() },
-      { new: true }
-    );
-
-    if (!trip) return res.status(404).json({ success: false, message: "Trip not found" });
-
-    try {
-      await sendPushNotification(trip.parent, {
-        title: "Trip Started 🚀",
-        body: "Your child's trip has started. Track it live now!",
-        data: { tripId: trip._id, type: 'TRIP_STARTED' }
-      });
-      getIO().to(trip._id.toString()).to(trip.parent.toString()).emit("trip_started", { tripId: id });
-    } catch (notifErr) {
-      console.error("[TRIP_CONTROLLER] Start notification error:", notifErr.message);
-    }
-
-    res.json({ success: true, message: "Trip started", trip });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
-
-/**
- * @desc Mark Trip as Completed
- * Handles fare calculation and driver wallet updates.
- * @route PATCH /api/trips/complete/:id
- */
-exports.completeTrip = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { actualFare } = req.body;
-
-    const trip = await Trip.findByIdAndUpdate(
-      id,
-      {
-        status: "completed",
-        completedAt: new Date(),
-        actualFare: actualFare || undefined
-      },
-      { new: true }
-    );
-
-    if (!trip) return res.status(404).json({ success: false, message: "Trip not found" });
-
-    // Settle Driver Finances & Capacity
-    if (trip.driver) {
-      const studentCount = trip.children ? trip.children.length : (trip.childrenDetails ? trip.childrenDetails.length : 1);
-      const fareAmount = actualFare || trip.fare || 0;
-
-      const driver = await Driver.findById(trip.driver);
-      if (driver) {
-        const updateData = {};
-        if (driver.vehicleSeats) {
-          updateData.$inc = {
-            assignedStudents: -studentCount,
-            walletBalance: fareAmount
-          };
-        } else {
-          updateData.$inc = { walletBalance: fareAmount };
-        }
-        await Driver.findByIdAndUpdate(trip.driver, updateData);
-      }
-    }
-
-    try {
-      await sendPushNotification(trip.parent, {
-        title: "Trip Completed 🏁",
-        body: "Your child has reached their destination safely.",
-        data: { tripId: trip._id, type: 'TRIP_COMPLETED' }
-      });
-      getIO().to(trip._id.toString()).to(trip.parent.toString()).emit("trip_completed", { tripId: id });
-    } catch (notifErr) {
-      console.error("[TRIP_CONTROLLER] Complete notification error:", notifErr.message);
-    }
-
-    res.json({ success: true, message: "Trip completed", trip });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
-
-/**
- * ==========================================
- * LIVE TRACKING & UTILS
- * ==========================================
- */
-
-/**
- * @desc Update Live Driver Location (legacy endpoint)
- * Used by the driver application during 'in_progress' trips to broadcast GPS data.
- * @route POST /api/trips/location
- */
-exports.updateDriverLocation = async (req, res) => {
-  try {
-    const { tripId, latitude, longitude, heading, speed } = req.body;
-
-    if (!tripId || !latitude || !longitude) {
-      return res.status(400).json({ message: "Missing location data" });
-    }
-
-    // Persist latest location in DB for map initial loads
-    await Trip.findByIdAndUpdate(tripId, {
-      currentLocation: {
-        type: 'Point',
-        coordinates: [longitude, latitude],
-        heading: heading || 0,
-        speed: speed || 0
-      },
-      driverLocation: {
-        latitude,
-        longitude,
-        updatedAt: new Date(),
-      },
-    });
-
-    // Real-time broadcast to the specific trip channel for parent's map
-    getIO().to(tripId).emit("trip:location", {
-      latitude,
-      longitude,
-      heading,
-      speed,
-      timestamp: Date.now()
-    });
-
-    res.json({ message: "Location updated" });
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-};
-
-/**
- * ==========================================
- * ADMIN TRIP MONITORING
- * ==========================================
- */
-
-/**
- * @desc Admin View of all Trips
- * @route GET /api/admin/trips
- */
-exports.getTrips = async (req, res) => {
-  try {
-    const trips = await Trip.find()
-      .populate("children", "name surname schoolName schoolAddress age gender grade")
-      .populate({
-        path: 'driver',
-        populate: {
-          path: 'userId',
-          select: 'name surname phone email profilePhoto'
-        }
-      });
-
-    res.json(trips);
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-};
-
-/**
- * @desc Manually Assign Driver to a Trip
- * @route POST /api/trips/assign-driver
+ * POST /api/trips/assign-driver
+ * Admin manually assigns a driver to a trip
  */
 exports.assignDriverToTrip = async (req, res) => {
   try {
     const { tripId, driverId } = req.body;
 
     const trip = await Trip.findById(tripId);
-    if (!trip) return res.status(404).json({ success: false, message: "Trip not found" });
-
-    const driver = await Driver.findById(driverId);
-    if (!driver) return res.status(404).json({ success: false, message: "Driver not found" });
-
-    // Check Capacity
-    const studentCount = trip.children ? trip.children.length : (trip.childrenDetails ? trip.childrenDetails.length : 1);
-    if (driver.vehicleSeats && (driver.assignedStudents || 0) + studentCount > driver.vehicleSeats) {
-      return res.status(400).json({
-        success: false,
-        message: `Driver capacity exceeded (Seats: ${driver.vehicleSeats}, Assigned: ${driver.assignedStudents || 0})`
-      });
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
     }
 
-    trip.driver = driverId;
-    trip.status = "assigned";
+    const driver = await User.findById(driverId);
+    if (!driver || driver.role !== "driver") {
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found" });
+    }
+
+    // Check capacity
+    const driverDoc = await findDriverDoc(driverId);
+    const students = childCount(trip);
+    if (driverDoc && driverDoc.vehicleSeats) {
+      const available =
+        driverDoc.vehicleSeats - (driverDoc.assignedStudents || 0);
+      if (students > available) {
+        return res.status(400).json({
+          success: false,
+          message: `Capacity exceeded. Available: ${available}`,
+        });
+      }
+    }
+
+    // Release old driver capacity if reassigning
+    if (
+      trip.driverId &&
+      trip.driverId.toString() !== driverId &&
+      ["pending", "accepted"].includes(trip.status)
+    ) {
+      await updateDriverCapacity(trip.driverId, -students);
+    }
+
+    trip.driverId = driverId;
+    trip.driverName = `${driver.name} ${driver.surname}`;
+    trip.driverVehicle =
+      `${driver.carBrand || ""} ${driver.carModel || ""} - ${
+        driver.registrationNumber || ""
+      }`.trim();
+    trip.status = "accepted";
     trip.acceptedAt = new Date();
+    trip.updatedAt = new Date();
     await trip.save();
 
-    // Increment Capacity
-    if (driver.vehicleSeats) {
-      await Driver.findByIdAndUpdate(driverId, {
-        $inc: { assignedStudents: studentCount }
-      });
-    }
+    await updateDriverCapacity(driverId, students);
 
-    const populatedTrip = await Trip.findById(tripId)
-      .populate('children')
-      .populate({
-        path: 'driver',
-        populate: { path: 'userId', select: 'name surname phone' }
-      });
+    console.log(`[Admin Assign] Trip ${tripId} → Driver ${driverId}`);
 
-    // Notify Parent
-    try {
-      await sendPushNotification(trip.parent, {
-        title: "Driver Assigned 🚗",
-        body: "An admin has assigned a driver to your trip.",
-        data: { tripId: trip._id, type: 'TRIP_ASSIGNED' }
-      });
-      getIO().to(trip.parent.toString()).emit("trip_accepted", { tripId: trip._id });
-    } catch (notifErr) {
-      console.error("[TRIP_CONTROLLER] Assign notification error:", notifErr.message);
-    }
+    // Notify parent
+    sendSocketNotification(trip.parentId, "trip_accepted", {
+      tripId: trip._id,
+      driverName: trip.driverName,
+    });
+    await sendPush(trip.parentId, {
+      title: "Driver Assigned 🚗",
+      body: `${trip.driverName} has been assigned to your trip.`,
+      data: { tripId: trip._id.toString(), type: "TRIP_ASSIGNED" },
+    });
 
-    // Notify Driver
-    try {
-      if (driver.userId) {
-        await sendPushNotification(driver.userId, {
-          title: "New Trip Assignment 📅",
-          body: "You have been assigned to a new trip by the administrator.",
-          data: { tripId: trip._id, type: 'NEW_TRIP' }
-        });
-        getIO().emit("trip:new", populatedTrip);
-      }
-    } catch (notifErr) {
-      console.error("[TRIP_CONTROLLER] Assign driver notification error:", notifErr.message);
-    }
+    // Notify driver
+    sendSocketNotification(driverId, "new_trip_request", {
+      tripId: trip._id,
+      parentName: trip.parentName,
+    });
+    await sendPush(driverId, {
+      title: "New Trip Assignment 📅",
+      body: "You have been assigned to a new trip.",
+      data: { tripId: trip._id.toString(), type: "NEW_TRIP" },
+    });
 
-    res.json({ success: true, message: "Driver assigned successfully", trip: populatedTrip });
-  } catch (err) {
-    console.error("[TRIP_CONTROLLER] Assign Driver Error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
+    return res.json({
+      success: true,
+      message: "Driver assigned successfully",
+      trip,
+    });
+  } catch (error) {
+    console.error("[Assign Driver] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
 /**
- * @desc Manually Update Trip Status
- * @route PUT /api/trips/:id/status
+ * PUT /api/trips/:id/status
+ * Generic status update (admin or system)
  */
 exports.updateTripStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, driverLocation } = req.body;
 
+    if (!status) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Status is required" });
+    }
+
     const validStatuses = [
-      'pending', 'pending_assignment', 'assigned', 'accepted',
-      'in_progress', 'in-progress', 'completed', 'cancelled', 'declined'
+      "pending",
+      "pending_assignment",
+      "accepted",
+      "in-progress",
+      "completed",
+      "cancelled",
+      "declined",
     ];
-    if (status && !validStatuses.includes(status)) {
-      return res.status(400).json({ success: false, message: "Invalid status" });
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
+      });
     }
 
     const trip = await Trip.findById(id);
-    if (!trip) return res.status(404).json({ success: false, message: "Trip not found" });
-
-    // Handle Capacity Release on Cancellation
-    if ((status === 'cancelled' || status === 'declined') && trip.driver) {
-      if (trip.status === 'assigned' || trip.status === 'accepted' || trip.status === 'pending') {
-        const studentCount = trip.children ? trip.children.length : (trip.childrenDetails ? trip.childrenDetails.length : 1);
-        const driver = await Driver.findById(trip.driver);
-        if (driver && driver.vehicleSeats) {
-          await Driver.findByIdAndUpdate(trip.driver, {
-            $inc: { assignedStudents: -studentCount }
-          });
-        }
-      }
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
     }
 
-    const updateData = {};
-    if (status) {
-      updateData.status = status;
-      switch (status) {
-        case 'accepted':
-        case 'assigned':
-          updateData.acceptedAt = new Date();
-          break;
-        case 'in_progress':
-        case 'in-progress':
-          updateData.startedAt = new Date();
-          break;
-        case 'completed':
-          updateData.completedAt = new Date();
-          break;
-        case 'cancelled':
-          updateData.cancelledAt = new Date();
-          break;
-        case 'declined':
-          updateData.declinedAt = new Date();
-          break;
-      }
+    // Release capacity on cancellation / decline
+    if (
+      (status === "cancelled" || status === "declined") &&
+      trip.driverId &&
+      ["pending", "accepted", "in-progress"].includes(trip.status)
+    ) {
+      await updateDriverCapacity(trip.driverId, -childCount(trip));
     }
 
-    // Update driver location if provided
+    const updateData = { status, updatedAt: new Date() };
+
+    switch (status) {
+      case "accepted":
+        updateData.acceptedAt = new Date();
+        break;
+      case "in-progress":
+        updateData.startedAt = new Date();
+        break;
+      case "completed":
+        updateData.completedAt = new Date();
+        break;
+      case "cancelled":
+        updateData.cancelledAt = new Date();
+        break;
+      case "declined":
+        updateData.declinedAt = new Date();
+        break;
+    }
+
     if (driverLocation && driverLocation.latitude && driverLocation.longitude) {
       updateData.driverLocation = {
         latitude: driverLocation.latitude,
@@ -1111,119 +1675,72 @@ exports.updateTripStatus = async (req, res) => {
       };
     }
 
-    const updatedTrip = await Trip.findByIdAndUpdate(id, updateData, { new: true });
+    const updatedTrip = await Trip.findByIdAndUpdate(id, updateData, {
+      new: true,
+    });
 
-    // Notify Parent
-    try {
-      await sendPushNotification(trip.parent, {
-        title: "Trip Status Updated 📢",
-        body: `Your trip status has been updated to: ${status}`,
-        data: { tripId: trip._id, type: 'STATUS_UPDATE' }
-      });
-      getIO().to(trip.parent.toString()).emit("trip_status_updated", { tripId: id, status });
-    } catch (notifErr) {
-      console.error("[TRIP_CONTROLLER] Status update notification error:", notifErr.message);
-    }
+    console.log(`[Update Status] Trip ${id} → ${status}`);
 
-    res.json({ success: true, message: `Trip status updated to ${status}`, trip: updatedTrip });
-  } catch (err) {
-    console.error("[TRIP_CONTROLLER] Update Status Error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-};
+    // Notify parent
+    sendSocketNotification(trip.parentId, "trip_status_updated", {
+      tripId: id,
+      status,
+    });
+    await sendPush(trip.parentId, {
+      title: "Trip Updated 📢",
+      body: `Your trip status: ${status}`,
+      data: { tripId: id, type: "STATUS_UPDATE" },
+    });
 
-/**
- * @desc Get all trips for a specific parent by parentId
- * @route GET /api/trips/parent/:parentId
- */
-exports.getParentTrips = async (req, res) => {
-  try {
-    const { parentId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(parentId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid parent ID format",
-      });
-    }
-
-    const trips = await Trip.find({ parent: parentId })
-      .populate('children', 'name surname schoolName schoolAddress age gender grade')
-      .populate({
-        path: 'driver',
-        populate: {
-          path: 'userId',
-          select: 'name surname phone profilePhoto'
-        }
-      })
-      .sort({ createdAt: -1 })
-      .lean();
-
-    return res.status(200).json({
+    return res.json({
       success: true,
-      trips: trips,
-      count: trips.length,
+      message: `Trip status updated to ${status}`,
+      trip: updatedTrip,
     });
   } catch (error) {
-    console.error("[TRIP_CONTROLLER] Get parent trips error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to get trips",
-      error: error.message,
-    });
+    console.error("[Update Trip Status] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
 /**
- * @desc Get all trips for a specific driver by driverId
- * @route GET /api/trips/driver-trips/:driverId
- */
-exports.getDriverTrips = async (req, res) => {
-  try {
-    const { driverId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(driverId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid driver ID format",
-      });
-    }
-
-    const trips = await Trip.find({ driver: driverId })
-      .populate('children', 'name surname schoolName schoolAddress age gender grade')
-      .populate({
-        path: 'parent',
-        select: 'name surname phone profilePhoto'
-      })
-      .sort({ createdAt: -1 })
-      .lean();
-
-    return res.status(200).json({
-      success: true,
-      trips: trips,
-      count: trips.length,
-    });
-  } catch (error) {
-    console.error("[TRIP_CONTROLLER] Get driver trips error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to get trips",
-      error: error.message,
-    });
-  }
-};
-
-/**
- * @desc Force Delete a Trip
- * @route DELETE /api/admin/trips/:id
+ * DELETE /api/trips/:id
+ * Delete a trip
  */
 exports.deleteTrip = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const trip = await Trip.findById(id);
+    if (!trip) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Trip not found" });
+    }
+
+    // Release capacity if needed
+    if (
+      trip.driverId &&
+      ["pending", "accepted", "in-progress"].includes(trip.status)
+    ) {
+      await updateDriverCapacity(trip.driverId, -childCount(trip));
+    }
+
     await Trip.findByIdAndDelete(id);
-    getIO().emit("trip:deleted", id);
-    res.json({ message: "Trip deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+
+    console.log(`[Delete Trip] ${id} deleted`);
+
+    try {
+      getIO().emit("trip:deleted", id);
+    } catch (_) {}
+
+    return res.json({ success: true, message: "Trip deleted successfully" });
+  } catch (error) {
+    console.error("[Delete Trip] Error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
