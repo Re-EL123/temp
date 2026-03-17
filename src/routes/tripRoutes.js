@@ -1,66 +1,125 @@
+// src/routes/tripRoutes.js
+// ═══════════════════════════════════════════════════════════════
+// UNIFIED TRIP ROUTES
+//
+// Route order matters:
+//   1. Fixed-path routes first (e.g. /create, /request, /location)
+//   2. Multi-segment param routes (/requests/:driverId, /parent/:parentId)
+//   3. General query route (/)
+//   4. Single-segment param routes (/:id, /:id/accept, etc.) LAST
+// ═══════════════════════════════════════════════════════════════
+
 const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/trip.controller");
-const verifyToken = require("../middleware/authMiddleware");
+const authMiddleware = require("../middleware/authMiddleware");
 
-/**
- * Trip Management Routes
- * All routes in this module require a valid JWT token.
- */
-router.use(verifyToken());
+// ═══════════════════════════════════════════════════════════════
+//  CREATION
+// ═══════════════════════════════════════════════════════════════
 
-/**
- * Parent Endpoints: Ride booking and history
- */
-router.get("/history", controller.getParentRideHistory);
-router.get("/user-trips", controller.getUserTrips);
-router.post("/request", controller.requestTrip);
-router.post("/create-request", controller.requestTrip); // Compatibility alias for frontend calls
-router.post("/create", controller.createTrip);           // Direct once-off booking
+// Create a new trip (with driver notification)
+router.post("/create", authMiddleware(), controller.createTrip);
 
-/**
- * NEW: Trip Status & Rating (used by CreateOnceOffScreen live tracking)
- */
-router.get("/:id/status", controller.getTripStatus);      // Live tracking polling
-router.post("/:id/rate", controller.rateTrip);             // Rate driver after completion
-router.patch("/:id/driver-location", controller.updateTripDriverLocation); // Driver GPS update
+// Request a trip (marketplace or redirect to create)
+router.post("/request", authMiddleware(), controller.requestTrip);
 
-/**
- * Parent trip history by parentId
- */
-router.get("/parent/:parentId", controller.getParentTrips);
+// Legacy location update (tripId in body)
+router.post("/location", authMiddleware(), controller.updateDriverLocation);
 
-/**
- * Admin Endpoints: System oversight and manual intervention
- */
-router.post("/assign-driver", verifyToken(["admin"]), controller.assignDriverToTrip);
-router.get("/", verifyToken(["admin" , "driver"]), controller.getTrips);
-router.delete("/:id", verifyToken(["admin"]), controller.deleteTrip);
+// Admin: assign driver to trip
+router.post("/assign-driver", authMiddleware(), controller.assignDriverToTrip);
 
-/**
- * Driver Endpoints: Receiving and executing trips
- */
+// ═══════════════════════════════════════════════════════════════
+//  DRIVER-SPECIFIC ROUTES (multi-segment, before /:id)
+// ═══════════════════════════════════════════════════════════════
 
-// Marketplace & Direct requests
-router.get("/requests/:driverId", controller.getDriverRequests);
-router.get("/driver/:driverId/pending", controller.getDriverRequests);
+// Get pending trip requests for a driver
+router.get(
+  "/requests/:driverId",
+  authMiddleware(),
+  controller.getDriverRequests
+);
 
-// Driver trip history
-router.get("/driver-trips/:driverId", controller.getDriverTrips);
+// Get upcoming accepted trips for a driver
+router.get(
+  "/upcoming/:driverId",
+  authMiddleware(),
+  controller.getDriverUpcomingTrips
+);
 
-// Upcoming scheduled/active trips
-router.get("/upcoming/:driverId", controller.getUpcomingTrips);
+// Get ALL trips for a specific driver
+router.get(
+  "/driver-trips/:driverId",
+  authMiddleware(),
+  controller.getDriverTrips
+);
 
-// Trip execution lifecycle
-router.put("/:id/accept", controller.acceptTrip);
-router.put("/:id/decline", controller.declineTrip);
-router.put("/:id/start", controller.startTrip);
-router.put("/:id/complete", controller.completeTrip);
+// ═══════════════════════════════════════════════════════════════
+//  PARENT-SPECIFIC ROUTES (multi-segment, before /:id)
+// ═══════════════════════════════════════════════════════════════
 
-// General status updates (e.g., cancellation)
-router.put("/:id/status", controller.updateTripStatus);
+// Get all trips for a parent
+router.get("/parent/:parentId", authMiddleware(), controller.getParentTrips);
 
-// Legacy location update
-router.post("/location", controller.updateDriverLocation);
+// Authenticated parent's ride history
+router.get("/history", authMiddleware(), controller.getParentRideHistory);
+
+// Unified endpoint (parent OR driver based on auth role)
+router.get("/user-trips", authMiddleware(), controller.getUserTrips);
+
+// Get active trip for tracking
+router.get("/active/:tripId", authMiddleware(), controller.getActiveTrip);
+
+// ═══════════════════════════════════════════════════════════════
+//  GENERAL QUERY (before /:id so "?" doesn't get caught)
+// ═══════════════════════════════════════════════════════════════
+
+// Get all trips with optional filters
+router.get("/", authMiddleware(), controller.getTrips);
+
+// ═══════════════════════════════════════════════════════════════
+//  PARAMETERISED /:id ROUTES (must be LAST)
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Status polling (lightweight) ─────────────────────────────
+router.get("/:id/status", authMiddleware(), controller.getTripStatus);
+
+// ─── Tracking data ────────────────────────────────────────────
+router.get("/:id/tracking", authMiddleware(), controller.getTripTracking);
+
+// ─── Single trip detail ───────────────────────────────────────
+router.get("/:id", authMiddleware(), controller.getTripById);
+
+// ─── Trip Actions (PUT — matching frontend) ───────────────────
+router.put("/:id/accept", authMiddleware(), controller.acceptTrip);
+router.put("/:id/decline", authMiddleware(), controller.declineTrip);
+router.put("/:id/start", authMiddleware(), controller.startTrip);
+router.put("/:id/complete", authMiddleware(), controller.completeTrip);
+router.put("/:id/cancel", authMiddleware(), controller.cancelTrip);
+
+// ─── Location update (path param style) ───────────────────────
+router.put("/:id/location", authMiddleware(), controller.updateTripLocation);
+
+// ─── Generic status update (admin) ────────────────────────────
+router.put("/:id/status", authMiddleware(), controller.updateTripStatus);
+
+// ─── PATCH alternatives (for newer clients) ──────────────────
+router.patch("/:id/accept", authMiddleware(), controller.acceptTrip);
+router.patch("/:id/decline", authMiddleware(), controller.declineTrip);
+router.patch("/:id/start", authMiddleware(), controller.startTrip);
+router.patch("/:id/complete", authMiddleware(), controller.completeTrip);
+router.patch("/:id/cancel", authMiddleware(), controller.cancelTrip);
+router.patch(
+  "/:id/driver-location",
+  authMiddleware(),
+  controller.updateTripDriverLocation
+);
+
+// ─── Rating ───────────────────────────────────────────────────
+router.post("/:id/rate", authMiddleware(), controller.rateTrip);
+
+// ─── Delete ───────────────────────────────────────────────────
+router.delete("/:id", authMiddleware(), controller.deleteTrip);
 
 module.exports = router;
