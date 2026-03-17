@@ -1,4 +1,4 @@
-const Withdrawal = require("../models/Withdrawal");
+const Withdrawal = require("../models/withdrawal");
 const Driver = require("../models/Driver");
 const User = require("../models/user");
 
