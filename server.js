@@ -41,10 +41,13 @@ app.use((req, res, next) => {
  */
 const corsOptions = {
   origin: (origin, callback) => {
-    if (isOriginAllowed(origin)) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin || isOriginAllowed(origin)) {
       callback(null, true);
     } else {
       console.log(`❌ CORS Denied for origin: ${origin}`);
+      // If you are in development, you can temporarily change this to callback(null, true)
+      // to allow everything while you debug.
       callback(new Error("Not allowed by CORS"));
     }
   },
