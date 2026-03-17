@@ -34,7 +34,7 @@ router.get("/parent/:parentId", controller.getParentTrips);
  * Admin Endpoints: System oversight and manual intervention
  */
 router.post("/assign-driver", verifyToken(["admin"]), controller.assignDriverToTrip);
-router.get("/", verifyToken(["admin"]), controller.getTrips);
+router.get("/", verifyToken(["admin" , "driver"]), controller.getTrips);
 router.delete("/:id", verifyToken(["admin"]), controller.deleteTrip);
 
 /**
