@@ -1,5 +1,5 @@
 const Trip = require("../models/trip.model");
-const Child = require("../models/child");
+const Child = require("../models/Child");
 const Driver = require("../models/Driver");
 const { getIO } = require("../socket");
 const { sendPushNotification } = require("../services/notification.service");
