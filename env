@@ -1,0 +1,3 @@
+MONGODB_URI="mongodb+srv://groundupgrinders_db_user:%23%23GroundUp%23%23@safeschoolride.bsasntf.mongodb.net/?appName=SafeSchoolRide"
+PORT=3000
+JWT_SECRET=supersecretkey123
