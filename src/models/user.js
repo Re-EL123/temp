@@ -7,11 +7,11 @@ const mongoose = require("mongoose");
  */
 const userSchema = new mongoose.Schema(
   {
-    // Identity Information
+    // ─── Identity Information ─────────────────────────────
     name: { type: String, required: true },
     surname: { type: String, required: true },
     email: { type: String, required: true, unique: true },
-    password: { type: String, required: true }, // Bcrypt hash
+    password: { type: String, required: true },
 
     /**
      * Role segregation:
@@ -22,10 +22,10 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: ["user", "parent", "driver", "admin"],
-      default: "user"
+      default: "user",
     },
 
-    // Contact & Profile
+    // ─── Contact & Profile ────────────────────────────────
     phone: { type: String },
     address: { type: String },
     location: { type: String },
@@ -33,44 +33,64 @@ const userSchema = new mongoose.Schema(
 
     /**
      * Onboarding State:
-     * Tracks if the user has completed the profile setup (e.g., driver vehicle details).
+     * Tracks if the user has completed the profile setup.
      */
     onboardingCompleted: { type: Boolean, default: false },
 
-    // Geospatial data for real-time distance discovery
-    latitude: { type: Number },
-    longitude: { type: Number },
+    // ─── Geospatial (set by driver dashboard when going online) ──
+    latitude: { type: Number, default: 0 },
+    longitude: { type: Number, default: 0 },
 
-    // Financial balance for Payments/Refunds
+    // ─── Availability (primarily for drivers) ─────────────
+    isActive: { type: Boolean, default: false },
+    status: { type: String, default: "offline" },
+    verified: { type: Boolean, default: false },
+
+    // ─── Vehicle fields (driver can set on User directly) ─
+    carBrand: { type: String, default: "" },
+    carModel: { type: String, default: "" },
+    carYear: { type: String, default: "" },
+    carColor: { type: String, default: "" },
+    registrationNumber: { type: String, default: "" },
+    licenseNumber: { type: String, default: "" },
+
+    // ─── Rating & Stats ──────────────────────────────────
+    rating: { type: Number, default: 5.0 },
+    totalRatings: { type: Number, default: 0 },
+    totalTrips: { type: Number, default: 0 },
+    totalEarnings: { type: Number, default: 0 },
+
+    // ─── Financial ────────────────────────────────────────
     walletBalance: { type: Number, default: 0 },
 
-    // Linked Child profiles (only for 'parent' role)
+    // ─── Linked Children (parent role only) ───────────────
     children: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Child'
-      }
+        ref: "Child",
+      },
     ],
 
-    // User preference flags
+    // ─── User Preferences ─────────────────────────────────
     privacySettings: {
       profileVisibility: { type: Boolean, default: true },
       shareActivity: { type: Boolean, default: true },
       locationSharing: { type: Boolean, default: true },
-      marketingEmails: { type: Boolean, default: false }
+      marketingEmails: { type: Boolean, default: false },
     },
 
-    // Mobile specific: Expo push token for notifications
+    // ─── Push Notifications ───────────────────────────────
     pushToken: { type: String, default: null },
 
-    // Availability flag (primarily for drivers)
-    isActive: { type: Boolean, default: false },
-
-    // Password reset handles
+    // ─── Password Reset ───────────────────────────────────
     resetPasswordOTP: { type: String, default: null },
-    resetPasswordExpires: { type: Date, default: null }
+    resetPasswordExpires: { type: Date, default: null },
   },
-  { timestamps: true } // Auto-manages createdAt and updatedAt
+  { timestamps: true }
 );
+
+// ─── Indexes ──────────────────────────────────────────────
+userSchema.index({ role: 1, isActive: 1 });
+userSchema.index({ email: 1 });
 
 module.exports = mongoose.model("User", userSchema);
