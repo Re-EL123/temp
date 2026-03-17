@@ -1,6 +1,6 @@
 const User = require("../models/user");
 const Driver = require("../models/Driver");
-const Trip = require("../models/Trip.model");
+const Trip = require("../models/trip.model");
 
 /**
  * @desc Get Admin Dashboard Statistics
