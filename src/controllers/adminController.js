@@ -1,5 +1,5 @@
 const User = require("../models/user");
-const Driver = require("../models/Driver");
+const Driver = require("../models/driver");
 const Trip = require("../models/trip.model");
 
 /**

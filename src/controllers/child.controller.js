@@ -1,6 +1,6 @@
-const Child = require("../models/Child");
+const Child = require("../models/child");
 const User = require("../models/user");
-const Trip = require("../models/Trip.model");
+const Trip = require("../models/trip.model");
 const { getIO } = require("../socket");
 
 /**
@@ -76,7 +76,7 @@ exports.addChild = async (req, res) => {
 exports.getChildren = async (req, res) => {
     try {
         if (req.user.role === 'driver') {
-            const Driver = require("../models/Driver");
+            const Driver = require("../models/driver");
             const driver = await Driver.findOne({ userId: req.user.id });
             if (!driver) return res.status(404).json({ message: "Driver not found" });
 

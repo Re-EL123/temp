@@ -2,9 +2,9 @@ const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middleware/authMiddleware");
 const User = require("../models/user");
-const Child = require("../models/Child");
-const Trip = require("../models/Trip.model");
-const Driver = require("../models/Driver");
+const Child = require("../models/child");
+const Trip = require("../models/trip.model");
+const Driver = require("../models/driver");
 
 /**
  * @desc Get authenticated user's profile
@@ -318,7 +318,7 @@ router.delete("/profile", verifyToken(), async (req, res) => {
  */
 router.get("/activity-logs", verifyToken(), async (req, res) => {
     try {
-        const Trip = require("../models/Trip.model");
+        const Trip = require("../models/trip.model");
         const logs = await Trip.find({ parent: req.user.id })
             .sort({ createdAt: -1 })
             .limit(20);

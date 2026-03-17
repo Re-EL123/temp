@@ -2,7 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/user");
-const Driver = require("../models/Driver");
+const Driver = require("../models/driver");
 const verifyToken = require("../middleware/authMiddleware");
 
 const router = express.Router();

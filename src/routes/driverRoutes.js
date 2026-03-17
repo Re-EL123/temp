@@ -1,6 +1,6 @@
 const express = require("express");
 const verifyToken = require("../middleware/authMiddleware");
-const Driver = require("../models/Driver");
+const Driver = require("../models/driver");
 const User = require("../models/user");
 const controller = require("../controllers/driver.controller");
 

@@ -1,4 +1,4 @@
-const Driver = require("../models/Driver");
+const Driver = require("../models/driver");
 const User = require("../models/user"); // Assuming case convention
 
 /**
