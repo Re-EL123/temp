@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middleware/authMiddleware");
 const User = require("../models/user");
-const Child = require("../models/child");
+const Child = require("../models/Child");
 const Trip = require("../models/trip.model");
 const Driver = require("../models/Driver");
 
