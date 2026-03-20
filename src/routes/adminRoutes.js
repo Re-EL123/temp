@@ -1,48 +1,85 @@
-// src/routes/adminRoutes.js
-// ═══════════════════════════════════════════════════════════════
-// ADMIN DASHBOARD ROUTES
-// All routes require authentication + admin role
-// ═══════════════════════════════════════════════════════════════
-
 const express = require("express");
 const router = express.Router();
-const controller = require("../controllers/admin.controller");
-const authMiddleware = require("../middleware/authMiddleware");
+const verifyToken = require("../middleware/authMiddleware");
+const User = require("../models/user");
 
-/**
- * Middleware: verify the authenticated user has admin role.
- * Runs AFTER authMiddleware has decoded the JWT and set req.user.
- */
-const adminOnly = (req, res, next) => {
-  if (!req.user || req.user.role !== "admin") {
-    return res.status(403).json({ success: false, message: "Admin access required" });
-  }
-  next();
-};
+const adminController = require("../controllers/adminController");
 
-// ─── Dashboard Overview ──────────────────────────────────────
-router.get("/stats", authMiddleware(), adminOnly, controller.getDashboardStats);
-router.get("/activity", authMiddleware(), adminOnly, controller.getRecentActivity);
+// ═══════════════════════════════════════════════════════════════
+//  DASHBOARD OVERVIEW
+// ═══════════════════════════════════════════════════════════════
 
-// ─── User Management ────────────────────────────────────────
-router.get("/users", authMiddleware(), adminOnly, controller.getAllUsers);
-router.get("/users/:id", authMiddleware(), adminOnly, controller.getUserById);
-router.put("/users/:id", authMiddleware(), adminOnly, controller.updateUser);
-router.delete("/users/:id", authMiddleware(), adminOnly, controller.deleteUser);
-router.put("/users/:id/toggle-active", authMiddleware(), adminOnly, controller.toggleUserActive);
+// ✔ ADMIN-ONLY DASHBOARD STATS
+router.get("/stats", verifyToken(["admin"]), adminController.getDashboardStats);
 
-// ─── Driver Management ──────────────────────────────────────
-router.get("/drivers", authMiddleware(), adminOnly, controller.getAllDrivers);
-router.get("/drivers/:id", authMiddleware(), adminOnly, controller.getDriverById);
-router.patch("/verify-driver/:id", authMiddleware(), adminOnly, controller.verifyDriver);
+// ✔ RECENT ACTIVITY FEED
+router.get("/activity", verifyToken(["admin"]), adminController.getRecentActivity);
 
-// ─── Trip Management ────────────────────────────────────────
-router.get("/trips", authMiddleware(), adminOnly, controller.getAllTrips);
-router.get("/trips/:id", authMiddleware(), adminOnly, controller.getTripById);
-router.put("/trips/:id/cancel", authMiddleware(), adminOnly, controller.adminCancelTrip);
-router.put("/trips/:id/status", authMiddleware(), adminOnly, controller.adminUpdateTripStatus);
+// ═══════════════════════════════════════════════════════════════
+//  USER MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
 
-// ─── Revenue ────────────────────────────────────────────────
-router.get("/revenue", authMiddleware(), adminOnly, controller.getRevenueStats);
+// ✔ LIST ALL USERS (with search/role/active filters)
+router.get("/users", verifyToken(["admin"]), adminController.getAllUsers);
+
+// ✔ GET SINGLE USER DETAIL
+router.get("/users/:id", verifyToken(["admin"]), adminController.getUserById);
+
+// ✔ UPDATE USER FIELDS
+router.put("/users/:id", verifyToken(["admin"]), adminController.updateUser);
+
+// ✔ DELETE USER WITH CASCADE
+router.delete("/users/:id", verifyToken(["admin"]), adminController.deleteUser);
+
+// ✔ TOGGLE USER ACTIVE STATUS
+router.put("/users/:id/toggle-active", verifyToken(["admin"]), adminController.toggleUserActive);
+
+// Legacy delete path (kept for backward compatibility)
+router.delete("/delete/:id", verifyToken(["admin"]), adminController.deleteUser);
+
+// ═══════════════════════════════════════════════════════════════
+//  DRIVER MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+
+// ✔ LIST ALL DRIVERS (with search/verified filters + trip stats)
+router.get("/drivers", verifyToken(["admin"]), adminController.getAllDrivers);
+
+// ✔ GET SINGLE DRIVER DETAIL (with recent trips)
+router.get("/drivers/:id", verifyToken(["admin"]), adminController.getDriverById);
+
+// ✔ VERIFY / UNVERIFY DRIVER
+router.patch("/verify-driver/:id", verifyToken(["admin"]), adminController.verifyDriver);
+
+// ═══════════════════════════════════════════════════════════════
+//  TRIP MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+
+// ✔ LIST ALL TRIPS (with status/date/search filters)
+router.get("/trips", verifyToken(["admin"]), adminController.getAllTrips);
+
+// ✔ GET SINGLE TRIP DETAIL
+router.get("/trips/:id", verifyToken(["admin"]), adminController.getTripById);
+
+// ✔ ADMIN FORCE-CANCEL A TRIP
+router.put("/trips/:id/cancel", verifyToken(["admin"]), adminController.adminCancelTrip);
+
+// ✔ ADMIN UPDATE TRIP STATUS
+router.put("/trips/:id/status", verifyToken(["admin"]), adminController.adminUpdateTripStatus);
+
+// ═══════════════════════════════════════════════════════════════
+//  REVENUE & ANALYTICS
+// ═══════════════════════════════════════════════════════════════
+
+// ✔ DETAILED REVENUE BREAKDOWN
+router.get("/revenue", verifyToken(["admin"]), adminController.getRevenueStats);
+
+// ═══════════════════════════════════════════════════════════════
+//  LEGACY
+// ═══════════════════════════════════════════════════════════════
+
+// Legacy dashboard endpoint
+router.get("/dashboard", verifyToken(["admin"]), (req, res) => {
+  res.json({ message: "Welcome Admin", admin: req.user });
+});
 
 module.exports = router;
