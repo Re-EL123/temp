@@ -24,15 +24,10 @@ const app = express();
  * Ensure upload directories exist
  */
 const uploadsDir = path.join(__dirname, "uploads");
-const photosDir = path.join(uploadsDir, "photos");
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
   console.log("📁 Created uploads directory");
-}
-if (!fs.existsSync(photosDir)) {
-  fs.mkdirSync(photosDir, { recursive: true });
-  console.log("📁 Created uploads/photos directory");
 }
 
 /**
@@ -46,9 +41,9 @@ app.enable("trust proxy");
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${req.method} ${req.url}`);
-  if (req.method === 'OPTIONS') {
-    console.log(`   CORS Preflight: ${req.headers.origin || 'no origin'}`);
-    console.log(`   Headers: ${req.headers['access-control-request-headers']}`);
+  if (req.method === "OPTIONS") {
+    console.log(`   CORS Preflight: ${req.headers.origin || "no origin"}`);
+    console.log(`   Headers: ${req.headers["access-control-request-headers"]}`);
   }
   next();
 });
@@ -68,35 +63,44 @@ const corsOptions = {
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-  optionsSuccessStatus: 200
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+  optionsSuccessStatus: 200,
 };
 app.use(cors(corsOptions));
 
 // Parsing incoming JSON and URL-encoded bodies with 10MB limit for image uploads
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 /**
  * Static File Serving
- * Serves uploaded photos at /uploads/photos/filename.jpg
- * Accessible as: https://safe-school-ride.duckdns.org/uploads/photos/photo-123.jpg
+ * Serves uploaded photos at /uploads/filename.jpg
+ * Accessible as: https://safe-school-ride.duckdns.org/uploads/photo-123.jpg
  */
-app.use("/uploads", express.static(path.join(__dirname, "uploads"), {
-  maxAge: '7d',
-  etag: true,
-  lastModified: true,
-  setHeaders: (res, filePath) => {
-    // Set proper content type for images
-    const ext = path.extname(filePath).toLowerCase();
-    if (['.jpg', '.jpeg'].includes(ext)) res.setHeader('Content-Type', 'image/jpeg');
-    else if (ext === '.png') res.setHeader('Content-Type', 'image/png');
-    else if (ext === '.webp') res.setHeader('Content-Type', 'image/webp');
-    // Allow cross-origin image loading
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  },
-}));
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "uploads"), {
+    maxAge: "7d",
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, filePath) => {
+      // Set proper content type for images
+      const ext = path.extname(filePath).toLowerCase();
+      if ([".jpg", ".jpeg"].includes(ext)) res.setHeader("Content-Type", "image/jpeg");
+      else if (ext === ".png") res.setHeader("Content-Type", "image/png");
+      else if (ext === ".webp") res.setHeader("Content-Type", "image/webp");
+      // Allow cross-origin image loading
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    },
+  })
+);
 
 // Database initialization
 connectDB()
@@ -114,9 +118,9 @@ const adminRoutes = require("./src/routes/adminRoutes");
 const tripRoutes = require("./src/routes/tripRoutes");
 const notificationRoutes = require("./src/routes/notificationRoutes");
 const reviewRoutes = require("./src/routes/reviewRoutes");
-const userRoutes = require('./src/routes/userRoutes');
-const walletRoutes = require('./src/routes/walletRoutes');
-const voucherRoutes = require('./src/routes/voucherRoutes');
+const userRoutes = require("./src/routes/userRoutes");
+const walletRoutes = require("./src/routes/walletRoutes");
+const voucherRoutes = require("./src/routes/voucherRoutes");
 const childRoutes = require("./src/routes/childRoutes");
 const withdrawalRoutes = require("./src/routes/withdrawalRoutes");
 const paymentRoutes = require("./src/routes/paymentRoutes");
@@ -125,22 +129,22 @@ const driverRoutes = require("./src/routes/driverRoutes");
 const uploadRoutes = require("./src/routes/uploadRoutes");
 
 // Core functional routes
-app.use("/api/auth", authRoutes);            // Authentication (Login, Register)
+app.use("/api/auth", authRoutes); // Authentication (Login, Register)
 app.use("/api/protected", protectedRoutes); // Token verification test route
-app.use("/api/admin", adminRoutes);         // Admin dashboard & management
-app.use("/api/trips", tripRoutes);         // Trip management (requests, tracking)
+app.use("/api/admin", adminRoutes); // Admin dashboard & management
+app.use("/api/trips", tripRoutes); // Trip management (requests, tracking)
 app.use("/api/notifications", notificationRoutes); // System notifications
-app.use("/api/reviews", reviewRoutes);      // Driver/Ride reviews
-app.use("/api/wallet", walletRoutes);       // Parent wallet & transaction history
-app.use("/api/payment", paymentRoutes);     // Payment gateway integration (PayFast)
-app.use("/api/vouchers", voucherRoutes);   // Voucher system logic
-app.use("/api/children", childRoutes);     // Child profiles and linking
+app.use("/api/reviews", reviewRoutes); // Driver/Ride reviews
+app.use("/api/wallet", walletRoutes); // Parent wallet & transaction history
+app.use("/api/payment", paymentRoutes); // Payment gateway integration (PayFast)
+app.use("/api/vouchers", voucherRoutes); // Voucher system logic
+app.use("/api/children", childRoutes); // Child profiles and linking
 app.use("/api/withdrawals", withdrawalRoutes); // Driver withdrawal requests
-app.use("/api/drivers", driverRoutes);     // Driver discovery & management
-app.use("/api/upload", uploadRoutes);      // File uploads (photos)
+app.use("/api/drivers", driverRoutes); // Driver discovery & management
+app.use("/api/upload", uploadRoutes); // File uploads (photos)
 
 // User profile routes with legacy support for dual path naming
-app.use("/api/user", userRoutes);  // Used by mobile app
+app.use("/api/user", userRoutes); // Used by mobile app
 app.use("/api/users", userRoutes); // Used by web frontend
 
 /**
@@ -155,7 +159,7 @@ app.get("/", (req, res) => {
     socketIO: {
       enabled: true,
       endpoint: "/socket.io",
-      ...(stats && { connections: stats.totalConnections })
+      ...(stats && { connections: stats.totalConnections }),
     },
     routes: {
       auth: "/api/auth",
@@ -163,19 +167,28 @@ app.get("/", (req, res) => {
       trips: "/api/trips",
       drivers: "/api/drivers",
       upload: "/api/upload",
-      admin: "/api/admin"
-    }
+      admin: "/api/admin",
+    },
   });
 });
 
 app.get("/ping", (req, res) => {
-  res.json({ message: "pong", timestamp: new Date().toISOString(), status: "healthy", uptime: process.uptime() });
+  res.json({
+    message: "pong",
+    timestamp: new Date().toISOString(),
+    status: "healthy",
+    uptime: process.uptime(),
+  });
 });
 
 // Provides real-time connection info for Socket.IO
 app.get("/socket/status", (req, res) => {
   const stats = getConnectionStats();
-  res.json({ success: true, socketIO: stats || { enabled: true, connections: 0 }, timestamp: new Date().toISOString() });
+  res.json({
+    success: true,
+    socketIO: stats || { enabled: true, connections: 0 },
+    timestamp: new Date().toISOString(),
+  });
 });
 
 /**
@@ -189,22 +202,22 @@ app.use((req, res, next) => {
     success: false,
     message: "Route not found",
     path: req.url,
-    method: req.method
+    method: req.method,
   });
 });
 
 // Centralized error handler for all unhandled errors in logic
 app.use((err, req, res, next) => {
   // Handle multer file size errors
-  if (err.code === 'LIMIT_FILE_SIZE') {
+  if (err.code === "LIMIT_FILE_SIZE") {
     return res.status(413).json({
       success: false,
-      message: 'File too large. Maximum size is 5MB.',
+      message: "File too large. Maximum size is 5MB.",
     });
   }
 
   // Handle multer file type errors
-  if (err.message && err.message.includes('Only JPEG')) {
+  if (err.message && err.message.includes("Only JPEG")) {
     return res.status(400).json({
       success: false,
       message: err.message,
@@ -215,13 +228,13 @@ app.use((err, req, res, next) => {
     url: req.url,
     method: req.method,
     error: err.message,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
   });
 
   res.status(500).json({
     success: false,
-    message: 'Internal Server Error',
-    ...(process.env.NODE_ENV === 'development' && { error: err.message })
+    message: "Internal Server Error",
+    ...(process.env.NODE_ENV === "development" && { error: err.message }),
   });
 });
 
@@ -249,23 +262,23 @@ server.listen(PORT, "0.0.0.0", () => {
 const handleShutdown = (signal) => {
   console.log(`\n🛑 ${signal} received, shutting down gracefully`);
   server.close(() => {
-    console.log('✅ HTTP server closed');
+    console.log("✅ HTTP server closed");
     io.close(() => {
-      console.log('✅ Socket.IO closed');
+      console.log("✅ Socket.IO closed");
       process.exit(0);
     });
   });
 };
 
-process.on('SIGTERM', () => handleShutdown('SIGTERM'));
-process.on('SIGINT', () => handleShutdown('SIGINT'));
+process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+process.on("SIGINT", () => handleShutdown("SIGINT"));
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
 });
 
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught Exception:", err);
 });
 
 module.exports = app;
