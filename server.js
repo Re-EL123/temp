@@ -24,6 +24,7 @@ const app = express();
  * Ensure upload directories exist
  */
 const uploadsDir = path.join(__dirname, "uploads");
+console.log("server.js uploadsDir =", uploadsDir);
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -86,7 +87,7 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
  */
 app.use(
   "/uploads",
-  express.static(path.join(__dirname, "uploads"), {
+  express.static(uploadsDir, {
     maxAge: "7d",
     etag: true,
     lastModified: true,
