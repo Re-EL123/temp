@@ -1,7 +1,8 @@
 /**
  * SafeSchoolRide Backend - server.js
  * Main entry point for the Node.js/Express server.
- * Handles database connection, middleware setup, socket.io integration, and route mounting.
+ * Handles database connection, middleware setup, socket.io integration,
+ * file uploads, and route mounting.
  */
 
 const dotenv = require("dotenv");
@@ -10,12 +11,29 @@ dotenv.config();
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
+const path = require("path");
+const fs = require("fs");
 
 const connectDB = require("./src/config/db");
 const { initSocket, getConnectionStats } = require("./src/socket");
 const { isOriginAllowed } = require("./src/config/cors");
 
 const app = express();
+
+/**
+ * Ensure upload directories exist
+ */
+const uploadsDir = path.join(__dirname, "uploads");
+const photosDir = path.join(uploadsDir, "photos");
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log("📁 Created uploads directory");
+}
+if (!fs.existsSync(photosDir)) {
+  fs.mkdirSync(photosDir, { recursive: true });
+  console.log("📁 Created uploads/photos directory");
+}
 
 /**
  * Middlewares & Security Configurations
@@ -46,8 +64,6 @@ const corsOptions = {
       callback(null, true);
     } else {
       console.log(`❌ CORS Denied for origin: ${origin}`);
-      // If you are in development, you can temporarily change this to callback(null, true)
-      // to allow everything while you debug.
       callback(new Error("Not allowed by CORS"));
     }
   },
@@ -61,6 +77,26 @@ app.use(cors(corsOptions));
 // Parsing incoming JSON and URL-encoded bodies with 10MB limit for image uploads
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+/**
+ * Static File Serving
+ * Serves uploaded photos at /uploads/photos/filename.jpg
+ * Accessible as: https://safe-school-ride.duckdns.org/uploads/photos/photo-123.jpg
+ */
+app.use("/uploads", express.static(path.join(__dirname, "uploads"), {
+  maxAge: '7d',
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    // Set proper content type for images
+    const ext = path.extname(filePath).toLowerCase();
+    if (['.jpg', '.jpeg'].includes(ext)) res.setHeader('Content-Type', 'image/jpeg');
+    else if (ext === '.png') res.setHeader('Content-Type', 'image/png');
+    else if (ext === '.webp') res.setHeader('Content-Type', 'image/webp');
+    // Allow cross-origin image loading
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  },
+}));
 
 // Database initialization
 connectDB()
@@ -85,6 +121,8 @@ const childRoutes = require("./src/routes/childRoutes");
 const withdrawalRoutes = require("./src/routes/withdrawalRoutes");
 const paymentRoutes = require("./src/routes/paymentRoutes");
 const protectedRoutes = require("./src/routes/protectedRoutes");
+const driverRoutes = require("./src/routes/driverRoutes");
+const uploadRoutes = require("./src/routes/uploadRoutes");
 
 // Core functional routes
 app.use("/api/auth", authRoutes);            // Authentication (Login, Register)
@@ -98,6 +136,8 @@ app.use("/api/payment", paymentRoutes);     // Payment gateway integration (PayF
 app.use("/api/vouchers", voucherRoutes);   // Voucher system logic
 app.use("/api/children", childRoutes);     // Child profiles and linking
 app.use("/api/withdrawals", withdrawalRoutes); // Driver withdrawal requests
+app.use("/api/drivers", driverRoutes);     // Driver discovery & management
+app.use("/api/upload", uploadRoutes);      // File uploads (photos)
 
 // User profile routes with legacy support for dual path naming
 app.use("/api/user", userRoutes);  // Used by mobile app
@@ -121,6 +161,8 @@ app.get("/", (req, res) => {
       auth: "/api/auth",
       users: ["/api/user", "/api/users"],
       trips: "/api/trips",
+      drivers: "/api/drivers",
+      upload: "/api/upload",
       admin: "/api/admin"
     }
   });
@@ -153,6 +195,22 @@ app.use((req, res, next) => {
 
 // Centralized error handler for all unhandled errors in logic
 app.use((err, req, res, next) => {
+  // Handle multer file size errors
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      success: false,
+      message: 'File too large. Maximum size is 5MB.',
+    });
+  }
+
+  // Handle multer file type errors
+  if (err.message && err.message.includes('Only JPEG')) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+
   console.error(`❌ Server Error:`, {
     url: req.url,
     method: req.method,
@@ -180,6 +238,8 @@ console.log("📡 Socket.IO server ready at /socket.io/");
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`\n🚀 Server running on http://0.0.0.0:${PORT}`);
   console.log(`📡 Socket.IO endpoint: ws://0.0.0.0:${PORT}/socket.io/`);
+  console.log(`📁 Static files: http://0.0.0.0:${PORT}/uploads/`);
+  console.log(`📸 Photo uploads: POST http://0.0.0.0:${PORT}/api/upload/photo`);
 });
 
 /**
@@ -206,8 +266,6 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err);
-  // Optional: Graceful shutdown could be initiated here if the error is critical
-  // handleShutdown('UncaughtException');
 });
 
 module.exports = app;
