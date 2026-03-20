@@ -6,7 +6,9 @@ const fs = require("fs");
 const verifyToken = require("../middleware/authMiddleware");
 
 // Create uploads directory if it doesn't exist
-const uploadsDir = path.join(__dirname, "..", "uploads");
+// __dirname here is: /home/ubuntu/temp/src/routes
+// We want:            /home/ubuntu/temp/uploads
+const uploadsDir = path.join(__dirname, "..", "..", "uploads");
 console.log("uploadRoutes.js uploadsDir =", uploadsDir);
 
 if (!fs.existsSync(uploadsDir)) {
