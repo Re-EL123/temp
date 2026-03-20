@@ -7,6 +7,7 @@ const verifyToken = require("../middleware/authMiddleware");
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, "..", "uploads");
+console.log("uploadRoutes.js uploadsDir =", uploadsDir);
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -61,7 +62,7 @@ router.post("/photo", verifyToken(), upload.single("photo"), (req, res) => {
     console.log(
       `[Upload] Photo saved: ${req.file.filename} (${(req.file.size / 1024).toFixed(
         1
-      )}KB) at ${photoUrl}`
+      )}KB) at ${photoUrl}; diskPath=${req.file.path}`
     );
 
     res.json({
