@@ -1234,6 +1234,7 @@ exports.getTripStatus = async (req, res) => {
  * GET /api/trips
  * Get all trips (with query-string filters)
  *   ?status=pending&userId=xxx&role=driver&startDate=...&endDate=...
+ *   Supports comma-separated statuses: ?status=pending,accepted,in-progress
  */
 exports.getTrips = async (req, res) => {
   try {
@@ -1241,9 +1242,13 @@ exports.getTrips = async (req, res) => {
 
     const filter = {};
 
-    // Filter by status
+    // Filter by status (supports comma-separated values for $in query)
     if (status) {
-      filter.status = status;
+      if (status.includes(",")) {
+        filter.status = { $in: status.split(",").map((s) => s.trim()) };
+      } else {
+        filter.status = status;
+      }
     }
 
     // Filter by user (parent or driver)
