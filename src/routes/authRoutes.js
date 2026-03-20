@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 const Driver = require("../models/Driver");
+const Child = require("../models/Child");
 const verifyToken = require("../middleware/authMiddleware");
 
 const router = express.Router();
@@ -65,8 +66,8 @@ router.put("/profile", verifyToken(), async (req, res) => {
         email: user.email,
         phone: user.phone,
         address: user.address,
-        role: user.role
-      }
+        role: user.role,
+      },
     });
   } catch (error) {
     console.error("Update Profile Error:", error);
@@ -76,59 +77,200 @@ router.put("/profile", verifyToken(), async (req, res) => {
 
 /**
  * @desc Register a new user
- * Handles both Parent and Driver registration. 
- * If the role is 'driver', it automatically initializes a Driver metadata profile.
+ * Handles both Parent and Driver registration.
+ * - Drivers: stores vehicle info on User model + creates Driver document
+ * - Parents: creates Child document + links to User
+ *
+ * Frontend sends:
+ *   { name, surname, email, password, role, phone, address,
+ *     isSouthAfrican, idNumber, passportNumber,
+ *     acceptedTerms, acceptedPrivacy, onboardingCompleted,
+ *     driverProfile: { carBrand, carModel, carYear, carColor,
+ *       registrationNumber, passengerSeats, hasChildSeats,
+ *       licenseNumber, hasPrDP, operatingArea, typicalOperatingHours },
+ *     parentProfile: { primaryChildName, primaryChildSchool,
+ *       primaryChildGrade, primaryRoutePickup, primaryRouteDropoff,
+ *       emergencyContactName, emergencyContactPhone,
+ *       emergencyContactRelationship }
+ *   }
+ *
  * @route POST /api/auth/register
  * @access Public
  */
 router.post("/register", async (req, res) => {
   try {
-    const { name, surname, email, password, role, address, onboardingCompleted } = req.body;
+    const {
+      name,
+      surname,
+      email,
+      password,
+      role,
+      phone,
+      address,
+      onboardingCompleted,
+      // Identity verification
+      isSouthAfrican,
+      idNumber,
+      passportNumber,
+      // Agreements
+      acceptedTerms,
+      acceptedPrivacy,
+      // Role-specific profiles from frontend
+      driverProfile,
+      parentProfile,
+      // Legacy flat fields (backwards compatibility with older frontend)
+      registrationNumber,
+      carBrand,
+      carModel,
+      passengerSeats,
+      cellNumber,
+    } = req.body;
 
+    // ── Validation ──────────────────────────────────────
     if (!name || !surname || !email || !password) {
-      return res.status(400).json({ message: "Name, Surname, email & password required" });
+      return res
+        .status(400)
+        .json({ message: "Name, Surname, email & password required" });
     }
 
-    const existing = await User.findOne({ email });
+    const existing = await User.findOne({
+      email: email.toLowerCase().trim(),
+    });
     if (existing) {
       return res.status(400).json({ message: "Email already exists" });
     }
 
+    // ── Hash password ───────────────────────────────────
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newUser = await User.create({
+    // ── Build User document ─────────────────────────────
+    const userData = {
       name,
       surname,
-      email,
+      email: email.toLowerCase().trim(),
       password: hashedPassword,
-      role: role || "user",
-      address: address,
-      onboardingCompleted: onboardingCompleted || false
-    });
+      role: role || "parent",
+      phone: phone || cellNumber || "",
+      address: address || "",
+      location: address || "",
+      onboardingCompleted: onboardingCompleted || false,
+    };
 
-    // Drivers require an auxiliary profile for vehicle and verification tracking
+    // ── If driver: store vehicle info on User model ─────
     if (role === "driver") {
-      const {
-        registrationNumber, carBrand, carModel, passengerSeats, cellNumber,
-        isSouthAfrican, idNumber
-      } = req.body;
-
-      await Driver.create({
-        userId: newUser._id,
-        registrationNumber,
-        carBrand,
-        carModel,
-        vehicleSeats: passengerSeats || 0,
-        cellNumber,
-        isSouthAfrican,
-        idNumber,
-        status: "offline",
-        isVerified: false
-      });
+      // Prefer driverProfile object, fall back to flat fields
+      const dp = driverProfile || {};
+      userData.carBrand = dp.carBrand || carBrand || "";
+      userData.carModel = dp.carModel || carModel || "";
+      userData.carYear = dp.carYear || "";
+      userData.carColor = dp.carColor || "";
+      userData.registrationNumber =
+        dp.registrationNumber || registrationNumber || "";
+      userData.licenseNumber = dp.licenseNumber || "";
+      userData.onboardingCompleted = true;
     }
 
+    const newUser = await User.create(userData);
+
+    console.log(
+      `[Register] User created: ${newUser._id} (${role || "parent"}) - ${email}`
+    );
+
+    // ── If driver: create Driver model document ─────────
+    if (role === "driver") {
+      try {
+        const dp = driverProfile || {};
+        await Driver.create({
+          userId: newUser._id,
+          registrationNumber:
+            dp.registrationNumber || registrationNumber || "",
+          carBrand: dp.carBrand || carBrand || "",
+          carModel: dp.carModel || carModel || "",
+          carYear: dp.carYear || "",
+          carColor: dp.carColor || "",
+          vehicleSeats: dp.passengerSeats || passengerSeats || 0,
+          passengerSeats: dp.passengerSeats || passengerSeats || 0,
+          licenseNumber: dp.licenseNumber || "",
+          cellNumber: phone || cellNumber || "",
+          hasChildSeats: dp.hasChildSeats || false,
+          hasPrDP: dp.hasPrDP || false,
+          operatingArea: dp.operatingArea || "",
+          typicalOperatingHours: dp.typicalOperatingHours || "",
+          isSouthAfrican: isSouthAfrican || false,
+          idNumber: idNumber || "",
+          status: "offline",
+          isVerified: false,
+        });
+
+        console.log(
+          `[Register] Driver profile created for user ${newUser._id}`
+        );
+      } catch (driverErr) {
+        console.error(
+          "[Register] Driver profile creation error (non-fatal):",
+          driverErr.message
+        );
+      }
+    }
+
+    // ── If parent: create Child document ────────────────
+    if (
+      role === "parent" &&
+      parentProfile &&
+      parentProfile.primaryChildName
+    ) {
+      try {
+        const pp = parentProfile;
+
+        const child = await Child.create({
+          parentId: newUser._id,
+          name: pp.primaryChildName || "",
+          surname: surname || "",
+          age: 0,
+          gender: "male",
+          schoolName: pp.primaryChildSchool || "",
+          grade: pp.primaryChildGrade || "",
+          homeAddress: {
+            type: "Point",
+            coordinates: [0, 0],
+            address: pp.primaryRoutePickup || address || "",
+          },
+          schoolAddress: {
+            type: "Point",
+            coordinates: [0, 0],
+            address: pp.primaryRouteDropoff || "",
+          },
+          parentName: `${name} ${surname}`,
+          relationship: pp.emergencyContactRelationship || "Parent",
+          parentContact: phone || "",
+        });
+
+        // Link child to parent user
+        await User.findByIdAndUpdate(newUser._id, {
+          $push: { children: child._id },
+        });
+
+        console.log(
+          `[Register] Child "${pp.primaryChildName}" created and linked to parent ${newUser._id}`
+        );
+      } catch (childErr) {
+        console.error(
+          "[Register] Child creation error (non-fatal):",
+          childErr.message
+        );
+      }
+    }
+
+    // ── Generate JWT ────────────────────────────────────
+    const token = jwt.sign(
+      { id: newUser._id, email: newUser.email, role: newUser.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
     res.status(201).json({
-      message: "User registered successfully",
+      message: "Account created successfully",
+      token,
       user: {
         id: newUser._id,
         name: newUser.name,
@@ -138,6 +280,10 @@ router.post("/register", async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("[Register] Error:", error);
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "Email already registered" });
+    }
     res.status(500).json({ message: "Server error", error: error.message });
   }
 });
@@ -152,11 +298,14 @@ router.post("/login", async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ message: "Email & password required" });
+      return res
+        .status(400)
+        .json({ message: "Email & password required" });
     }
 
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user)
+      return res.status(404).json({ message: "User not found" });
 
     const isPasswordCorrect = await bcrypt.compare(password, user.password);
     if (!isPasswordCorrect) {
@@ -193,8 +342,11 @@ router.post("/login", async (req, res) => {
 router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
   try {
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
 
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
     user.resetPasswordOTP = otp;
@@ -203,9 +355,16 @@ router.post("/forgot-password", async (req, res) => {
 
     console.log(`[AUTH] OTP for ${email}: ${otp}`);
 
-    res.json({ success: true, message: "OTP sent to email (check server logs for testing)" });
+    res.json({
+      success: true,
+      message: "OTP sent to email (check server logs for testing)",
+    });
   } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
   }
 });
 
@@ -219,12 +378,15 @@ router.post("/reset-password", async (req, res) => {
   const { email, otp, newPassword } = req.body;
   try {
     const user = await User.findOne({
-      email,
+      email: email.toLowerCase().trim(),
       resetPasswordOTP: otp,
-      resetPasswordExpires: { $gt: Date.now() }
+      resetPasswordExpires: { $gt: Date.now() },
     });
 
-    if (!user) return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
+    if (!user)
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid or expired OTP" });
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     user.password = hashedPassword;
@@ -234,7 +396,11 @@ router.post("/reset-password", async (req, res) => {
 
     res.json({ success: true, message: "Password reset successfully" });
   } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
   }
 });
 
