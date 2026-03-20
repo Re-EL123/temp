@@ -7,15 +7,16 @@ const verifyToken = require("../middleware/authMiddleware");
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, "..", "uploads");
-const photosDir = path.join(uploadsDir, "photos");
 
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-if (!fs.existsSync(photosDir)) fs.mkdirSync(photosDir, { recursive: true });
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log("📁 Ensured uploads directory:", uploadsDir);
+}
 
-// Configure multer storage
+// Configure multer storage – save directly into /uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, photosDir);
+    cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
@@ -53,12 +54,15 @@ router.post("/photo", verifyToken(), upload.single("photo"), (req, res) => {
       });
     }
 
-    // Build the public URL
-    // This assumes the server serves /uploads/* statically
-    const photoUrl = `/uploads/photos/${req.file.filename}`;
+    // File is saved directly under /uploads
+    const photoUrl = `/uploads/${req.file.filename}`;
     const fullUrl = `${req.protocol}://${req.get("host")}${photoUrl}`;
 
-    console.log(`[Upload] Photo saved: ${req.file.filename} (${(req.file.size / 1024).toFixed(1)}KB)`);
+    console.log(
+      `[Upload] Photo saved: ${req.file.filename} (${(req.file.size / 1024).toFixed(
+        1
+      )}KB) at ${photoUrl}`
+    );
 
     res.json({
       success: true,
@@ -84,7 +88,7 @@ router.post("/photo", verifyToken(), upload.single("photo"), (req, res) => {
 router.delete("/photo/:filename", verifyToken(), (req, res) => {
   try {
     const { filename } = req.params;
-    const filePath = path.join(photosDir, filename);
+    const filePath = path.join(uploadsDir, filename);
 
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
@@ -94,6 +98,7 @@ router.delete("/photo/:filename", verifyToken(), (req, res) => {
       res.status(404).json({ success: false, message: "Photo not found" });
     }
   } catch (error) {
+    console.error("[Upload] Delete error:", error);
     res.status(500).json({ success: false, message: "Delete failed" });
   }
 });
