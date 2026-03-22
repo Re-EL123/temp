@@ -24,11 +24,19 @@ const app = express();
  * Ensure upload directories exist
  */
 const uploadsDir = path.join(__dirname, "uploads");
+const verificationDir = path.join(__dirname, "uploads", "verification");
+
 console.log("server.js uploadsDir =", uploadsDir);
+console.log("server.js verificationDir =", verificationDir);
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
   console.log("📁 Created uploads directory");
+}
+
+if (!fs.existsSync(verificationDir)) {
+  fs.mkdirSync(verificationDir, { recursive: true });
+  console.log("📁 Created verification uploads directory");
 }
 
 /**
@@ -84,6 +92,8 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
  * Static File Serving
  * Serves uploaded photos at /uploads/filename.jpg
  * Accessible as: https://safe-school-ride.duckdns.org/uploads/photo-123.jpg
+ *
+ * Also serves verification documents at /uploads/verification/{userId}/filename
  */
 app.use(
   "/uploads",
@@ -92,11 +102,12 @@ app.use(
     etag: true,
     lastModified: true,
     setHeaders: (res, filePath) => {
-      // Set proper content type for images
+      // Set proper content type for images and PDFs
       const ext = path.extname(filePath).toLowerCase();
       if ([".jpg", ".jpeg"].includes(ext)) res.setHeader("Content-Type", "image/jpeg");
       else if (ext === ".png") res.setHeader("Content-Type", "image/png");
       else if (ext === ".webp") res.setHeader("Content-Type", "image/webp");
+      else if (ext === ".pdf") res.setHeader("Content-Type", "application/pdf");
       // Allow cross-origin image loading
       res.setHeader("Access-Control-Allow-Origin", "*");
     },
@@ -128,6 +139,7 @@ const paymentRoutes = require("./src/routes/paymentRoutes");
 const protectedRoutes = require("./src/routes/protectedRoutes");
 const driverRoutes = require("./src/routes/driverRoutes");
 const uploadRoutes = require("./src/routes/uploadRoutes");
+const verificationRoutes = require("./src/routes/verificationRoutes");
 
 // Core functional routes
 app.use("/api/auth", authRoutes); // Authentication (Login, Register)
@@ -143,6 +155,7 @@ app.use("/api/children", childRoutes); // Child profiles and linking
 app.use("/api/withdrawals", withdrawalRoutes); // Driver withdrawal requests
 app.use("/api/drivers", driverRoutes); // Driver discovery & management
 app.use("/api/upload", uploadRoutes); // File uploads (photos)
+app.use("/api/driver", verificationRoutes); // Driver verification & document uploads
 
 // User profile routes with legacy support for dual path naming
 app.use("/api/user", userRoutes); // Used by mobile app
@@ -169,6 +182,7 @@ app.get("/", (req, res) => {
       drivers: "/api/drivers",
       upload: "/api/upload",
       admin: "/api/admin",
+      verification: "/api/driver",
     },
   });
 });
@@ -213,12 +227,12 @@ app.use((err, req, res, next) => {
   if (err.code === "LIMIT_FILE_SIZE") {
     return res.status(413).json({
       success: false,
-      message: "File too large. Maximum size is 5MB.",
+      message: "File too large. Maximum size is 10MB.",
     });
   }
 
   // Handle multer file type errors
-  if (err.message && err.message.includes("Only JPEG")) {
+  if (err.message && (err.message.includes("Only JPEG") || err.message.includes("Invalid file type"))) {
     return res.status(400).json({
       success: false,
       message: err.message,
@@ -254,6 +268,8 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`📡 Socket.IO endpoint: ws://0.0.0.0:${PORT}/socket.io/`);
   console.log(`📁 Static files: http://0.0.0.0:${PORT}/uploads/`);
   console.log(`📸 Photo uploads: POST http://0.0.0.0:${PORT}/api/upload/photo`);
+  console.log(`🔐 Verification: http://0.0.0.0:${PORT}/api/driver/verification-status`);
+  console.log(`📄 Verification uploads: http://0.0.0.0:${PORT}/uploads/verification/`);
 });
 
 /**
