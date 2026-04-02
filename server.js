@@ -140,26 +140,28 @@ const protectedRoutes = require("./src/routes/protectedRoutes");
 const driverRoutes = require("./src/routes/driverRoutes");
 const uploadRoutes = require("./src/routes/uploadRoutes");
 const verificationRoutes = require("./src/routes/verificationRoutes");
+const payfastRoutes = require("./src/routes/payfastRoutes");
 
 // Core functional routes
-app.use("/api/auth", authRoutes); // Authentication (Login, Register)
-app.use("/api/protected", protectedRoutes); // Token verification test route
-app.use("/api/admin", adminRoutes); // Admin dashboard & management
-app.use("/api/trips", tripRoutes); // Trip management (requests, tracking)
+app.use("/api/auth", authRoutes);                 // Authentication (Login, Register)
+app.use("/api/protected", protectedRoutes);       // Token verification test route
+app.use("/api/admin", adminRoutes);               // Admin dashboard & management
+app.use("/api/trips", tripRoutes);                // Trip management (requests, tracking)
 app.use("/api/notifications", notificationRoutes); // System notifications
-app.use("/api/reviews", reviewRoutes); // Driver/Ride reviews
-app.use("/api/wallet", walletRoutes); // Parent wallet & transaction history
-app.use("/api/payment", paymentRoutes); // Payment gateway integration (PayFast)
-app.use("/api/vouchers", voucherRoutes); // Voucher system logic
-app.use("/api/children", childRoutes); // Child profiles and linking
-app.use("/api/withdrawals", withdrawalRoutes); // Driver withdrawal requests
-app.use("/api/drivers", driverRoutes); // Driver discovery & management
-app.use("/api/upload", uploadRoutes); // File uploads (photos)
-app.use("/api/driver", verificationRoutes); // Driver verification & document uploads
+app.use("/api/reviews", reviewRoutes);            // Driver/Ride reviews
+app.use("/api/wallet", walletRoutes);             // Parent wallet & transaction history
+app.use("/api/payment", paymentRoutes);           // Legacy payment routes
+app.use("/api/payfast", payfastRoutes);           // PayFast ITN webhook + return/cancel redirects
+app.use("/api/vouchers", voucherRoutes);          // Voucher system logic
+app.use("/api/children", childRoutes);            // Child profiles and linking
+app.use("/api/withdrawals", withdrawalRoutes);    // Driver withdrawal requests
+app.use("/api/drivers", driverRoutes);            // Driver discovery & management
+app.use("/api/upload", uploadRoutes);             // File uploads (photos)
+app.use("/api/driver", verificationRoutes);       // Driver verification & document uploads
 
 // User profile routes with legacy support for dual path naming
-app.use("/api/user", userRoutes); // Used by mobile app
-app.use("/api/users", userRoutes); // Used by web frontend
+app.use("/api/user", userRoutes);                 // Used by mobile app
+app.use("/api/users", userRoutes);                // Used by web frontend
 
 /**
  * Status & Monitoring Routes
@@ -183,6 +185,8 @@ app.get("/", (req, res) => {
       upload: "/api/upload",
       admin: "/api/admin",
       verification: "/api/driver",
+      wallet: "/api/wallet",
+      payfast: "/api/payfast",
     },
   });
 });
@@ -270,6 +274,10 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`📸 Photo uploads: POST http://0.0.0.0:${PORT}/api/upload/photo`);
   console.log(`🔐 Verification: http://0.0.0.0:${PORT}/api/driver/verification-status`);
   console.log(`📄 Verification uploads: http://0.0.0.0:${PORT}/uploads/verification/`);
+  console.log(`💰 Wallet API: http://0.0.0.0:${PORT}/api/wallet`);
+  console.log(`💳 PayFast ITN: POST http://0.0.0.0:${PORT}/api/payfast/notify`);
+  console.log(`💳 PayFast Return: GET http://0.0.0.0:${PORT}/api/payfast/return`);
+  console.log(`💳 PayFast Cancel: GET http://0.0.0.0:${PORT}/api/payfast/cancel`);
 });
 
 /**
