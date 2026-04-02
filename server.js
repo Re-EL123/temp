@@ -134,7 +134,7 @@ const userRoutes = require("./src/routes/userRoutes");
 const walletRoutes = require("./src/routes/walletRoutes");
 const voucherRoutes = require("./src/routes/voucherRoutes");
 const childRoutes = require("./src/routes/childRoutes");
-const withdrawalRoutes = require("./src/routes/withdrawalRoutes");
+//const withdrawalRoutes = require("./src/routes/withdrawalRoutes");
 const paymentRoutes = require("./src/routes/paymentRoutes");
 const protectedRoutes = require("./src/routes/protectedRoutes");
 const driverRoutes = require("./src/routes/driverRoutes");
@@ -154,7 +154,7 @@ app.use("/api/payment", paymentRoutes);           // Legacy payment routes
 app.use("/api/payfast", payfastRoutes);           // PayFast ITN webhook + return/cancel redirects
 app.use("/api/vouchers", voucherRoutes);          // Voucher system logic
 app.use("/api/children", childRoutes);            // Child profiles and linking
-app.use("/api/withdrawals", withdrawalRoutes);    // Driver withdrawal requests
+//app.use("/api/withdrawals", withdrawalRoutes);    // Driver withdrawal requests
 app.use("/api/drivers", driverRoutes);            // Driver discovery & management
 app.use("/api/upload", uploadRoutes);             // File uploads (photos)
 app.use("/api/driver", verificationRoutes);       // Driver verification & document uploads
