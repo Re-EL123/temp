@@ -9,7 +9,7 @@
 
 const express = require("express");
 const router = express.Router();
-const { protect } = require("../middleware/authMiddleware.");
+const { protect } = require("../middleware/authMiddleware");
 const payfastController = require("../controllers/payfastController");
 
 // ── ITN Webhook (NO AUTH - PayFast server-to-server) ────────────
